@@ -5551,6 +5551,11 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                 "final_size": final_size,
                                 "steps": steps,
                             })
+                        elif event == "document_state":
+                            for 항목 in self._결과목록:
+                                if 항목["원본"] == item[1]:
+                                    항목["status"] = item[2]
+                            self.로그표시(f"{Path(item[1]).name}: {item[3]}")
                         elif event == "document_error":
                             self._실패목록[str(item[1])] = str(item[2])
                             self.stage_board.finish("오류")
@@ -5622,8 +5627,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             if self._안내키:
                                 self._안내지남.add(self._안내키)
                             self._안내키 = "done" if item[2] == 0 else self._안내키
-                            절약한_초 = self._절약초 or 0
-                            절약한_시간 = 절약시간_분초_표시(self._절약초 or 0)
+                            절약한_초 = getattr(self, '_절약초', None) or 0   # 실패가 있는 첫 작업에는 아직 없다
+                            절약한_시간 = 절약시간_분초_표시(절약한_초)
                             self._절약초 = None
                             self._작업결과_표시(item[2] == 0)
                             최종검수 = item[6] if len(item) >= 8 else None
@@ -5638,6 +5643,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                 self.status_var.set(f"처리 완료 · 성공 {item[1]}개 / 실패 {item[2]}개")
                             self.로그표시("=" * 45 + f"\n작업 완료 - 성공 {item[1]}개 / 실패 {item[2]}개\n" + "=" * 45)
                             상세 = [f"성공 {item[1]}개 · 실패 {item[2]}개"]
+                            # 저장은 됐지만 확인이 필요한 파일은 성공 수와 따로 보여 준다.
+                            for 상태값, 이름 in (("integrity_failed", "무결성 확인 필요"), ("inspection_failed", "검수 실패")):
+                                대상 = [Path(r["원본"]).name for r in self._결과목록 if r.get("status") == 상태값]
+                                if 대상:
+                                    self.status_var.set(f"{self.status_var.get()} · {이름} {len(대상)}개")
+                                    상세.extend(f"{이름}(저장됨): {파일명}" for 파일명 in 대상)
                             if len(item) >= 6:
                                 상세.append(f"세부 작업 {item[3]}건 · 성공 {item[4]}건 · 실패 {item[5]}건")
                             if not item[2]:

@@ -551,54 +551,78 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             # 내어쓰기는 한/글의 Shift+Tab 값이 최종이다. 저장 뒤 기준 서식 값으로 덮지 않는다(사용자 2026-11-02).
             로그(f"전체 처리 {총회차}회 완료")
             로그(f"저장 완료: {저장파일}")
-            단계시간_구간('저장 후 규칙 검수')
-            최종규칙검사 = 저장결과_규칙검수(파일, 저장파일, 결과창=_결과창_띄우는가(total))
-            if 최종규칙검사 is False:
-                return False
-            단계시간_구간('무결성·숫자 대조')
-            무결성 = None
-            if 검수_사용 and 원본_구조 is not None:
-                결과_구조 = inspect_hwpx(저장파일)
-                무결성 = compare_documents(원본_구조, 결과_구조)
-                보고서경로 = None
-                if 무결성보고서파일_사용:
-                    보고서경로 = Path(저장파일).with_name(Path(저장파일).stem + "(무결성검사).json")
-                    보고서경로.write_text(json.dumps(무결성, ensure_ascii=False, indent=2), encoding="utf-8")
-                로그(
-                    f"문서 무결성 검사: {'통과' if 무결성['ok'] else '확인 필요'} / "
-                    f"본문 일치도 {무결성['text_similarity']:.1%} / "
-                    f"보고서 {보고서경로.name if 보고서경로 else '파일 저장 안 함'}"
-                )
-                for 문제 in 무결성["issues"]:
-                    로그(f"  - [{문제['severity']}] {문제['message']}")
-            if 검수_사용:
-                # 숫자 데이터 일치 검사(TODO 4순위): 표 가까이의 본문 수치가 그 표에 같은 단위로
-                # 있는지 본다. 읽기 전용이며 실패가 아닌 '확인 필요'로만 알린다.
-                try:
-                    대조 = 숫자_대조(결과_구조 if 원본_구조 is not None else inspect_hwpx(저장파일))
-                    최종규칙검사['number_check'] = 대조
-                    if 대조['status'] == 'skipped':
-                        진단로그(f"숫자 대조: {대조['reason']}")
-                    else:
-                        로그(f"숫자 대조: 표 가까이 본문 수치 {대조['checked']}개 중 표에서 찾지 못한 "
-                             f"{len(대조['review'])}개(확인 필요)")
-                        for 항목 in 대조['review']:
-                            로그(f"  - [숫자 대조 확인 필요] {항목['text']}: {항목['context']}")
-                except Exception as exc:
-                    진단로그(f"숫자 대조 실패(무시): {exc}")
-            최종검수_문서목록.append({
-                "source": str(파일),
-                "output": str(저장파일),
-                "success": True,
-                "rule_checks": 최종규칙검사,
-                "processed_pages": 처리쪽수,
-                "integrity_ok": 무결성["ok"] if 무결성 is not None else None,
-                "text_similarity": 무결성.get("text_similarity") if 무결성 is not None else None,
-            })
-            if 작업_임시폴더 is not None:
-                작업_임시폴더.cleanup()
+            # 결과 파일이 확정된 즉시 목록과 saved 사건에 남긴다. 뒤의 검수가 취소·실패해도
+            # 파일이 사라진 것처럼 보이지 않게 상태만 바꾼다(F04).
+            from docfit_engine.job_state import DocumentStatus
+            기록 = {"source": str(파일), "output": str(저장파일), "success": False,
+                  "status": DocumentStatus.SAVED, "integrity_ok": None, "processed_pages": 처리쪽수}
+            최종검수_문서목록.append(기록)
             # 실행창이 '작업 결과' 표시와 '결과파일 열기'에 쓰도록 알린다.
             gui_queue.put(("saved", str(파일), str(저장파일), 처리쪽수))
+
+            def 저장후_상태(상태값, 안내):
+                기록["status"] = 상태값
+                로그(f"{안내}: {저장파일}")
+                gui_queue.put(("document_state", str(파일), 상태값, 안내))
+
+            try:
+                단계시간_구간('저장 후 규칙 검수')
+                최종규칙검사 = 저장결과_규칙검수(파일, 저장파일, 결과창=_결과창_띄우는가(total))
+                if 최종규칙검사 is False:
+                    if 중단_요청됨():
+                        저장후_상태(DocumentStatus.CANCELLED, "저장 후 검수 중 중단(결과 파일은 저장됨)")
+                    else:
+                        기록["error"] = "저장 후 규칙 검수 실패"
+                        저장후_상태(DocumentStatus.INSPECTION_FAILED, "저장 후 규칙 검수 실패(결과 파일은 저장됨)")
+                    return False
+                단계시간_구간('무결성·숫자 대조')
+                무결성 = None
+                if 검수_사용 and 원본_구조 is not None:
+                    결과_구조 = inspect_hwpx(저장파일)
+                    무결성 = compare_documents(원본_구조, 결과_구조)
+                    보고서경로 = None
+                    if 무결성보고서파일_사용:
+                        보고서경로 = Path(저장파일).with_name(Path(저장파일).stem + "(무결성검사).json")
+                        보고서경로.write_text(json.dumps(무결성, ensure_ascii=False, indent=2), encoding="utf-8")
+                    로그(
+                        f"문서 무결성 검사: {'통과' if 무결성['ok'] else '확인 필요'} / "
+                        f"본문 일치도 {무결성['text_similarity']:.1%} / "
+                        f"보고서 {보고서경로.name if 보고서경로 else '파일 저장 안 함'}"
+                    )
+                    for 문제 in 무결성["issues"]:
+                        로그(f"  - [{문제['severity']}] {문제['message']}")
+                if 검수_사용:
+                    # 숫자 데이터 일치 검사(TODO 4순위): 표 가까이의 본문 수치가 그 표에 같은 단위로
+                    # 있는지 본다. 읽기 전용이며 실패가 아닌 '확인 필요'로만 알린다.
+                    try:
+                        대조 = 숫자_대조(결과_구조 if 원본_구조 is not None else inspect_hwpx(저장파일))
+                        최종규칙검사['number_check'] = 대조
+                        if 대조['status'] == 'skipped':
+                            진단로그(f"숫자 대조: {대조['reason']}")
+                        else:
+                            로그(f"숫자 대조: 표 가까이 본문 수치 {대조['checked']}개 중 표에서 찾지 못한 "
+                                 f"{len(대조['review'])}개(확인 필요)")
+                            for 항목 in 대조['review']:
+                                로그(f"  - [숫자 대조 확인 필요] {항목['text']}: {항목['context']}")
+                    except Exception as exc:
+                        진단로그(f"숫자 대조 실패(무시): {exc}")
+                기록.update({
+                    "success": True,
+                    "rule_checks": 최종규칙검사,
+                    "integrity_ok": 무결성["ok"] if 무결성 is not None else None,
+                    "text_similarity": 무결성.get("text_similarity") if 무결성 is not None else None,
+                })
+                if 무결성 is not None and not 무결성["ok"]:
+                    # success 는 기존 의미(파일 처리·저장)를 유지하고 상태로 구분한다(F05).
+                    저장후_상태(DocumentStatus.INTEGRITY_FAILED, "무결성 확인 필요(결과 파일은 저장됨)")
+            except Exception as exc:
+                traceback.print_exc()
+                기록["error"] = str(exc)
+                저장후_상태(DocumentStatus.INSPECTION_FAILED, f"저장 후 검수 오류(결과 파일은 저장됨): {exc}")
+                return False
+            finally:
+                if 작업_임시폴더 is not None:
+                    작업_임시폴더.cleanup()
             return True
         return bind_function(_문서_처리_본체, _docfit_namespace)
     if _docfit_symbol == '절전_방지':
