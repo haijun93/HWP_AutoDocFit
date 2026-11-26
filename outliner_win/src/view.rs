@@ -17,6 +17,8 @@ pub struct Row {
     pub status: Option<String>,
     /// 화면에 그릴 글(`collapsed:: true` 속성 글자는 뺀다).
     pub text: String,
+    /// 블록 안 줄 수(최소 1) — 화면에서 차지하는 줄 칸.
+    pub lines: usize,
 }
 
 /// 파일에는 접힘이 저장되지 않으므로(엔진 `parse` 는 항상 펼침) Logseq 관례인 `collapsed:: true`
@@ -61,7 +63,14 @@ fn display_text(block: &Block) -> String {
         kept.push(words[i]);
         i += 1;
     }
-    if kept.len() == words.len() { block.text.clone() } else { kept.join(" ") }
+    if kept.len() == words.len() {
+        block.text.clone()
+    } else if block.text.contains('\n') {
+        // 줄 구조를 유지하며 속성 글자만 뺀다.
+        block.text.replace("collapsed:: true", "").replace("collapsed::true", "")
+    } else {
+        kept.join(" ")
+    }
 }
 
 /// 보이는 줄 목록: 접힌 블록 뒤에서 들여쓰기가 더 깊은 연속 블록은 숨긴다(Flutter `_visibleBlocks` 와 같은 규칙).
@@ -87,6 +96,7 @@ pub fn build_rows(doc: &Document) -> Vec<Row> {
             folded: block.folded,
             status: block.status.clone(),
             text: display_text(block),
+            lines: block.text.split('\n').count(),
         });
     }
     rows
@@ -166,6 +176,60 @@ impl View {
         apply_collapsed_property(&mut doc);
         let rows = build_rows(&doc);
         Ok(View { doc, rows, selected: 0, first: 0, selection_anchor: None, selection_end: None })
+    }
+
+    /// 줄 `row` 가 맨 위 줄부터 몇 번째 줄 칸에서 시작하는가.
+    pub fn slot_of(&self, row: usize) -> usize {
+        self.rows.iter().take(row).skip(self.first).map(|r| r.lines).sum()
+    }
+
+    /// 화면 y → 줄 번호(여러 줄 블록 반영).
+    pub fn row_at(&self, y: i32, header_h: i32, row_h: i32) -> Option<usize> {
+        if y < header_h || row_h <= 0 {
+            return None;
+        }
+        let mut slot = ((y - header_h) / row_h) as usize;
+        for (i, row) in self.rows.iter().enumerate().skip(self.first) {
+            if slot < row.lines {
+                return Some(i);
+            }
+            slot -= row.lines;
+        }
+        None
+    }
+
+    /// 줄 `row` 전체가 보이도록 한 맨 위 줄 번호.
+    pub fn visible_first(&self, row: usize, page: usize) -> usize {
+        let mut first = ensure_visible(self.first, row, self.rows.len(), page);
+        while first < row && self.rows[first..=row].iter().map(|r| r.lines).sum::<usize>() > page {
+            first += 1;
+        }
+        first
+    }
+
+    /// 지금 줄 하나만 블록 선택.
+    pub fn select_current(&mut self) {
+        self.selection_anchor = Some(self.selected);
+        self.selection_end = Some(self.selected);
+    }
+
+    pub fn select_all(&mut self) {
+        let last = self.rows.len().saturating_sub(1);
+        self.selection_anchor = Some(0);
+        self.selection_end = Some(last);
+        self.selected = last;
+    }
+
+    /// 선택 상태에서 Ctrl+A: 부모 블록을 선택한다(최상위면 전체).
+    pub fn select_parent(&mut self) {
+        let depth = self.rows.get(self.selected).map_or(0, |r| r.depth);
+        match (0..self.selected).rev().find(|&i| self.rows[i].depth < depth) {
+            Some(parent) => {
+                self.selected = parent;
+                self.select_current();
+            }
+            None => self.select_all(),
+        }
     }
 
     pub fn block_count(&self) -> usize {

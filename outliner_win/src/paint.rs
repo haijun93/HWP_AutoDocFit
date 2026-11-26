@@ -64,6 +64,14 @@ impl Metrics {
         let top = self.header_h + slot as i32 * self.row_h + scale(3, dpi);
         RECT { left: tx - scale(4, dpi), top, right: (width - self.pad).max(tx), bottom: top + self.row_h - 2 * scale(3, dpi) }
     }
+
+    /// 줄 `pos` 의 편집 칸(여러 줄 블록은 줄 수만큼 높다).
+    pub fn row_edit_rect(&self, dpi: u32, view: &View, pos: usize, width: i32) -> RECT {
+        let row = &view.rows[pos];
+        let mut r = self.edit_rect(dpi, row.depth, row.status.is_some(), view.slot_of(pos), width);
+        r.bottom += (row.lines as i32 - 1) * self.row_h;
+        r
+    }
 }
 
 /// 그리기에 덧붙는 정보(편집 중 줄·안내 문구·변경 표시).
@@ -221,10 +229,13 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
 
         let page = m.page_rows(h) + 1; // 아래로 잘려 보이는 한 줄까지
         let end = (view.first + page).min(view.rows.len());
-        for (slot, index) in (view.first..end).enumerate() {
+        let mut slot = 0usize;
+        for index in view.first..end {
             let row = &view.rows[index];
             let top = m.header_h + slot as i32 * m.row_h;
-            let band = RECT { left: 0, top, right: w, bottom: top + m.row_h };
+            slot += row.lines;
+            let height = row.lines as i32 * m.row_h;
+            let band = RECT { left: 0, top, right: w, bottom: top + height };
             let in_range = view.selection_anchor.zip(view.selection_end)
                 .is_some_and(|(a, b)| index >= a.min(b) && index <= a.max(b));
             let selected = index == view.selected || in_range;
@@ -234,7 +245,7 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             // 들여쓰기 안내선(조상 단계마다 세로선).
             for d in 0..row.depth {
                 let x = m.marker_x(d);
-                line(dc, pal.divider, 1, &[(x, top), (x, top + m.row_h)]);
+                line(dc, pal.divider, 1, &[(x, top), (x, top + height)]);
             }
             let mid = top + m.row_h / 2;
             let mx = m.marker_x(row.depth);
@@ -279,7 +290,7 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             }
             if extras.editing_row == Some(index) {
                 // 글자는 EDIT 가 덮는다. 테두리만(EDIT 바깥 1px).
-                let er = m.edit_rect(dpi, row.depth, row.status.is_some(), slot, w);
+                let er = m.row_edit_rect(dpi, view, index, w);
                 let outer = RECT { left: er.left - 1, top: er.top - 1, right: er.right + 1, bottom: er.bottom + 1 };
                 let brush = CreateSolidBrush(pal.accent);
                 FrameRect(dc, &outer, brush);
@@ -289,18 +300,21 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             if row.text.is_empty() {
                 continue;
             }
-            let segs = crate::links::segments(&row.text);
-            if segs.iter().all(|s| s.link.is_none()) {
-                let r = RECT { left: tx, top, right: w - m.pad, bottom: top + m.row_h };
-                text(dc, &row.text, r, color, DT_LEFT);
-            } else {
-                // `[[링크]]` 는 강조색으로 이어 그린다(클릭 판정은 `link_spans_x` 가 같은 폭으로 계산).
-                let mut x = tx;
-                for seg in &segs {
-                    let r = RECT { left: x, top, right: (w - m.pad).max(x), bottom: top + m.row_h };
-                    let c = if seg.link.is_some() { pal.row_text(selected, pal.accent) } else { color };
-                    text(dc, &seg.text, r, c, DT_LEFT);
-                    x += text_width(dc, &seg.text);
+            for (n, part) in row.text.split('\n').enumerate() {
+                let top = top + n as i32 * m.row_h;
+                let segs = crate::links::segments(part);
+                if segs.iter().all(|s| s.link.is_none()) {
+                    let r = RECT { left: tx, top, right: w - m.pad, bottom: top + m.row_h };
+                    text(dc, part, r, color, DT_LEFT);
+                } else {
+                    // `[[링크]]` 는 강조색으로 이어 그린다(클릭 판정은 `link_spans_x` 가 같은 폭으로 계산).
+                    let mut x = tx;
+                    for seg in &segs {
+                        let r = RECT { left: x, top, right: (w - m.pad).max(x), bottom: top + m.row_h };
+                        let c = if seg.link.is_some() { pal.row_text(selected, pal.accent) } else { color };
+                        text(dc, &seg.text, r, c, DT_LEFT);
+                        x += text_width(dc, &seg.text);
+                    }
                 }
             }
         }

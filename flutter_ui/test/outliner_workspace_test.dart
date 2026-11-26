@@ -38,7 +38,7 @@ void main() {
       if (p['action'] == 'list') return {'ok': true, 'data': {'pages': []}};
       if (p['action'] == 'daily') return {'ok': true, 'data': {'page': 'Today', 'markdown': '- one\n- two\n- three\n', 'version': 'v1', 'document': {'blocks': blocks}}};
       if (p['action'] == 'backlinks') return {'ok': true, 'data': {'block_ids': []}};
-      if (p['action'] == 'edit') return {'ok': true, 'data': {'markdown': '- three\n- one\n- two\n', 'document': {'blocks': [blocks[2], blocks[0], blocks[1]]}}};
+      if (p['action'] == 'key') return {'ok': true, 'data': {'handled': true, 'markdown': '- three\n- one\n- two\n', 'document': {'blocks': [blocks[2], blocks[0], blocks[1]]}, 'selection': [1, 2]}};
       if (p['action'] == 'save') return {'ok': true, 'data': {'version': 'v2'}};
       return {'ok': true, 'data': {}};
     }
@@ -47,6 +47,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('outliner-block-1')));
     await tester.pump();
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    // Logseq 처럼 첫 Alt+↓ 는 지금 블록만, 다음부터 늘어난다.
+    expect(find.text('1개 선택'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
     await tester.pumpAndSettle();
@@ -57,9 +61,9 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
     await tester.pumpAndSettle();
-    final edit = requests.lastWhere((p) => p['action'] == 'edit');
-    expect(edit['operation'], 'down');
-    expect(edit['block_ids'], [1, 2]);
+    final edit = requests.lastWhere((p) => p['action'] == 'key' && p['operation'] != 'commit');
+    expect(edit['operation'], 'move_down');
+    expect(edit['selection'], [0, 1]);
   });
 
   test('file recent page store reads and writes only its supplied directory', () async {
@@ -224,101 +228,6 @@ void main() {
     expect(find.text('Today'), findsOneWidget);
   });
 
-  testWidgets('keyboard shortcuts edit outline blocks', (tester) async {
-    final operations = <String>[];
-    var blocks = [
-      {'id': 1, 'text': 'First', 'indent': 0, 'folded': false},
-      {'id': 2, 'text': 'Second', 'indent': 0, 'folded': false},
-    ];
-    Future<Object?> api(String method, [List<Object?> args = const []]) async {
-      final p = args.first as Map;
-      if (p['action'] == 'list') return {'ok': true, 'data': {'pages': [{'name': 'Home'}]}};
-      if (p['action'] == 'daily' || p['action'] == 'load') return {'ok': true, 'data': {'page': 'Home', 'markdown': '', 'version': '1', 'document': {'blocks': blocks}}};
-      if (p['action'] == 'backlinks') return {'ok': true, 'data': {'block_ids': []}};
-      if (p['action'] == 'edit') {
-        operations.add('${p['operation']}:${p['block_id']}');
-        if (p['operation'] == 'insert') blocks = [...blocks, {'id': 3, 'text': '', 'indent': 0, 'folded': false}];
-        if (p['operation'] == 'delete') blocks = blocks.where((b) => b['id'] != p['block_id']).toList();
-        if (p['operation'] == 'set_text') {
-          for (final block in blocks) {
-            if (block['id'] == p['block_id']) block['text'] = p['text'];
-          }
-        }
-        if (p['operation'] == 'indent') blocks = [blocks[0], {...blocks[1], 'indent': 1}];
-        if (p['operation'] == 'outdent') blocks = [blocks[0], {...blocks[1], 'indent': 0}];
-        if (p['operation'] == 'fold' || p['operation'] == 'unfold') {
-          blocks = blocks.map((b) => b['id'] == p['block_id']
-              ? {...b, 'folded': p['operation'] == 'fold'}
-              : b).toList();
-        }
-        return {'ok': true, 'data': {'markdown': '', 'version': '1', 'document': {'blocks': blocks}}};
-      }
-      if (p['action'] == 'save') return {'ok': true, 'data': {'version': '2'}};
-      return {'ok': true, 'data': {}};
-    }
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: OutlinerWorkspace(api: api, recentPagesStore: MemoryRecentPagesStore()))));
-    await tester.pumpAndSettle();
-    final first = find.byKey(const ValueKey('outliner-block-1'));
-    final second = find.byKey(const ValueKey('outliner-block-2'));
-    await tester.tap(first); await tester.pump();
-    await tester.enterText(first, 'First edited');
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('insert:1'));
-    await tester.pump(const Duration(milliseconds: 100));
-    // Enter 로 줄이 추가되면 입력 위치(포커스)가 새 줄로 옮겨가야 한다.
-    final newField = tester.widget<EditableText>(find.descendant(of: find.byKey(const ValueKey('outliner-block-3')), matching: find.byType(EditableText)));
-    expect(newField.focusNode.hasFocus, isTrue);
-    await tester.tap(second); await tester.pump();
-    await tester.enterText(second, '두 번째 한글 수정');
-    await tester.sendKeyEvent(LogicalKeyboardKey.tab); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('indent:2'));
-    final tabCommit = operations.indexOf('set_text:2');
-    expect(tabCommit, greaterThanOrEqualTo(0));
-    expect(tabCommit, lessThan(operations.indexOf('indent:2')));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('outdent:2'));
-    final shiftTabCommit = operations.lastIndexOf('set_text:2');
-    expect(shiftTabCommit, greaterThanOrEqualTo(0));
-    expect(shiftTabCommit, lessThan(operations.lastIndexOf('outdent:2')));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('2개 선택'), findsOneWidget);
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('up:null'));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('down:null'));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('fold:2'));
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('unfold:2'));
-    await tester.tap(second); await tester.enterText(second, 'Second');
-    await tester.sendKeyEvent(LogicalKeyboardKey.home);
-    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('set_text:1'));
-    expect(operations, contains('delete:2'));
-    await tester.tap(first); await tester.enterText(first, '');
-    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('delete:1'));
-  });
-
   testWidgets('synthetic Korean input is committed before Enter creates the next block', (tester) async {
     final requests = <Map>[];
     List<Map<String, Object?>> blocks = [
@@ -340,18 +249,18 @@ void main() {
       if (payload['action'] == 'backlinks') {
         return {'ok': true, 'data': {'block_ids': []}};
       }
-      if (payload['action'] == 'edit') {
+      if (payload['action'] == 'key') {
         requests.add(payload);
-        if (payload['operation'] == 'set_text') {
-          blocks = blocks.map((block) => block['id'] == payload['block_id']
-              ? {...block, 'text': payload['text']}
-              : block).toList();
-        } else if (payload['operation'] == 'insert') {
-          blocks = [...blocks, {'id': 2, 'text': '', 'indent': 0, 'folded': false}];
-        }
+        blocks = [
+          {...blocks[0], 'text': payload['text']},
+          {'id': 2, 'text': '', 'indent': 0, 'folded': false},
+        ];
         return {'ok': true, 'data': {
+          'handled': true,
           'markdown': blocks.map((block) => '- ${block['text']}\n').join(),
           'document': {'blocks': blocks},
+          'selection': [],
+          'cursor': {'block': 1, 'start': 0, 'end': 0},
         }};
       }
       if (payload['action'] == 'save') return {'ok': true, 'data': {'version': '2'}};
@@ -372,7 +281,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(requests.map((request) => request['operation']), ['set_text', 'insert']);
+    expect(requests.map((request) => request['operation']), ['enter']);
     expect(requests.first['text'], '한글 입력 시험');
     expect(find.byKey(const ValueKey('outliner-block-2')), findsOneWidget);
     final nextField = tester.widget<EditableText>(find.descendant(

@@ -67,6 +67,16 @@ pub struct Block {
     pub page_links: Vec<String>,
     pub block_refs: Vec<String>,
     pub line_index: usize,
+    /// Hidden `key:: value` continuation lines kept verbatim; they travel with the block.
+    #[serde(default)]
+    pub extra: Vec<ExtraLine>,
+}
+
+/// A property continuation line and how many text continuation lines precede it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtraLine {
+    pub after: usize,
+    pub line: String,
 }
 
 /// Ordered Markdown line nodes; raw lines are retained verbatim.
@@ -91,6 +101,7 @@ pub struct Document {
 mod api;
 mod history;
 mod index;
+mod keys;
 mod ops;
 mod parse_serialize;
 mod rename;
@@ -99,6 +110,7 @@ mod store;
 
 pub use api::handle_request;
 pub use history::{UndoHistory, MAX_UNDO_BYTES, MAX_UNDO_DEPTH};
+pub use keys::{apply_key, pair_backspace, type_char, Cursor, KeyInput, KeyOutcome};
 pub use index::{backlinks, build_index, resolve_block_ref, BlockRefResolution, Index};
 pub use ops::{edit, edit_many, edit_with_offset};
 pub use parse_serialize::{parse, serialize};

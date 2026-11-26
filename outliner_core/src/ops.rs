@@ -140,6 +140,7 @@ pub fn edit_with_offset(
             document.blocks[block_index].text = left;
             refresh_metadata(&mut document.blocks[block_index]);
             right_block.id = new_id;
+            right_block.extra.clear(); // id:: 등 속성은 앞 블록에 남는다
             right_block.text = right;
             refresh_metadata(&mut right_block);
             document.blocks.insert(block_index + 1, right_block);
@@ -171,6 +172,7 @@ pub fn edit_with_offset(
                 document.blocks[block_index].text.push(' ');
             }
             document.blocks[block_index].text.push_str(&next.text);
+            crate::keys::carry_extra(&mut document.blocks[block_index], &next);
             refresh_metadata(&mut document.blocks[block_index]);
             document.sequence.remove(sequence_index + 1);
             document.line_endings.remove(sequence_index + 1);

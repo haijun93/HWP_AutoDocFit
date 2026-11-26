@@ -25,8 +25,9 @@ fn ctrl(vk: u16) -> KeyEvent {
     KeyEvent { ctrl: true, ..KeyEvent::new(vk, 1000) }
 }
 
+/// 블록 이동 키 Alt+Shift+↑/↓.
 fn alt(vk: u16) -> KeyEvent {
-    KeyEvent { alt: true, ..KeyEvent::new(vk, 1000) }
+    KeyEvent { alt: true, shift: true, ..KeyEvent::new(vk, 1000) }
 }
 
 const TREE: &str = "- A\n  - A1\n  - A2\n- B\n  - B1\n- C\n";
@@ -237,7 +238,8 @@ fn ctrl_enter_toggles_todo_while_editing_and_keeps_the_typed_text_and_session() 
     sh.editor.key(ctrl(VK_RETURN));
     assert_eq!(sh.editor.view.doc.blocks[0].status.as_deref(), Some("DONE"));
     sh.editor.key(ctrl(VK_RETURN));
-    assert_eq!(sh.editor.view.doc.blocks[0].status.as_deref(), Some("TODO"), "DONE → TODO");
+    assert_eq!(sh.editor.view.doc.blocks[0].status.as_deref(), None, "DONE → 없음");
+    sh.editor.key(ctrl(VK_RETURN));
     assert!(sh.editor.markdown().starts_with("- TODO 일 하나 고침\n"));
     assert_eq!(sh.editor.view.doc.blocks.len(), 2, "블록이 늘지 않는다(Enter 가 아님)");
 }
@@ -300,16 +302,20 @@ fn move_up_carries_children_over_the_previous_sibling_subtree() {
 }
 
 #[test]
-fn move_among_siblings_inside_a_parent_and_errors_at_edges() {
+fn move_among_siblings_and_across_the_parent_boundary() {
     let mut sh = tree_editor();
     select_text(&mut sh, "A1");
     sh.editor.nav_command(Cmd::MoveDown);
     assert_eq!(sh.editor.markdown(), "- A\n  - A2\n  - A1\n- B\n  - B1\n- C\n");
+    // 마지막 자식이 아래로 → 부모의 다음 형제의 첫 자식.
+    sh.editor.nav_command(Cmd::MoveDown);
+    assert_eq!(sh.editor.markdown(), "- A\n  - A2\n- B\n  - A1\n  - B1\n- C\n");
+    // 첫 자식이 위로 → 부모의 앞 형제의 마지막 자식.
+    sh.editor.nav_command(Cmd::MoveUp);
+    assert_eq!(sh.editor.markdown(), "- A\n  - A2\n  - A1\n- B\n  - B1\n- C\n");
+    select_text(&mut sh, "A2");
     let before = sh.editor.markdown();
-    sh.editor.nav_command(Cmd::MoveDown); // A1 은 A 의 마지막 자식 — 부모 밖으로 못 나간다
-    assert_eq!(sh.editor.markdown(), before);
-    select_text(&mut sh, "B1");
-    sh.editor.nav_command(Cmd::MoveUp); // B1 위는 부모 B
+    sh.editor.nav_command(Cmd::MoveUp); // 더 올라갈 자리가 없다
     assert_eq!(sh.editor.markdown(), before);
     assert!(sh.editor.message.is_some());
 }

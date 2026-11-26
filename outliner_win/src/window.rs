@@ -2,12 +2,12 @@
 //! 키·IME 처리는 `edit::Editor`(순수 상태 기계)에 맡기고, 여기서는 메시지를 `KeyEvent` 로 바꾸고
 //! 결과(EDIT 위치·제목 줄 ●·안내 문구)를 화면에 반영만 한다.
 use crate::capture::{Shot, palette_of};
-use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_Y, VK_Z};
+use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_OEM_1, VK_Y, VK_Z};
 use crate::layout::{self, Btn, Layout, LeftItem, RightItem};
 use crate::paint::{Extras, Metrics, create_font, scale, wide};
 use crate::paint_shell::{draw_shell, edit_rect_of};
 use crate::shell::{PromptKind, Shell};
-use crate::view::{Nav, ensure_visible, row_at};
+use crate::view::{Nav, ensure_visible};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use ui_theme::{Kind, Palette, ThemePref};
@@ -36,6 +36,7 @@ const EM_POSFROMCHAR: u32 = 0x00D6;
 const EM_SCROLLCARET: u32 = 0x00B7;
 const EM_CHARFROMPOS: u32 = 0x00D7;
 const CF_UNICODETEXT: u32 = 13;
+const EM_REPLACESEL: u32 = 0x00C2;
 const GMEM_MOVEABLE: u32 = 2;
 
 #[link(name = "user32")]
@@ -61,6 +62,28 @@ static COMPOSING: AtomicBool = AtomicBool::new(false);
 static CANDIDATE: AtomicBool = AtomicBool::new(false);
 static ORIG_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
 static ORIG_SEARCH_PROC: AtomicIsize = AtomicIsize::new(0);
+/// 방금 KEYDOWN 을 우리가 처리했다 → 뒤따르는 제어 문자(Backspace 8 등)는 EDIT 에 넘기지 않는다.
+static EAT_CONTROL_CHAR: AtomicBool = AtomicBool::new(false);
+
+/// 여러 줄 EDIT 의 줄바꿈은 `\r\n`, 규칙 쪽은 `\n` 이다. EDIT 오프셋 → 규칙 오프셋.
+fn from_edit_offset(raw: &[u16], offset: usize) -> usize {
+    offset - raw[..offset.min(raw.len())].iter().filter(|&&c| c == b'\r' as u16).count()
+}
+
+/// 규칙 오프셋(`\n` 한 글자) → EDIT 오프셋(`\r\n` 두 글자).
+fn to_edit_offset(text: &str, offset: usize) -> usize {
+    offset + text.encode_utf16().take(offset).filter(|&c| c == b'\n' as u16).count()
+}
+
+unsafe fn window_units(hwnd: HWND) -> Vec<u16> {
+    unsafe {
+        let n = GetWindowTextLengthW(hwnd).max(0) as usize;
+        let mut buf = vec![0u16; n + 2];
+        let got = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        buf.truncate(got.max(0) as usize);
+        buf
+    }
+}
 
 fn now_ms() -> u64 {
     unsafe { GetTickCount64() }
@@ -97,25 +120,28 @@ unsafe fn comp_len(hwnd: HWND) -> i32 {
 
 impl EditHost for WinHost {
     fn read_text(&mut self) -> String {
-        unsafe {
-            let n = GetWindowTextLengthW(self.edit).max(0) as usize;
-            let mut buf = vec![0u16; n + 2];
-            let got = GetWindowTextW(self.edit, buf.as_mut_ptr(), buf.len() as i32);
-            String::from_utf16_lossy(&buf[..got.max(0) as usize])
-        }
+        unsafe { String::from_utf16_lossy(&window_units(self.edit)).replace("\r\n", "\n") }
     }
     fn selection(&mut self) -> (usize, usize) {
         unsafe {
             let (mut s, mut e) = (0u32, 0u32);
             SendMessageW(self.edit, EM_GETSEL, &mut s as *mut u32 as WPARAM, &mut e as *mut u32 as LPARAM);
-            (s as usize, e as usize)
+            let raw = window_units(self.edit);
+            (from_edit_offset(&raw, s as usize), from_edit_offset(&raw, e as usize))
         }
     }
     fn set_text(&mut self, text: &str, caret: usize) {
         unsafe {
             COMPOSING.store(false, Ordering::SeqCst);
-            SetWindowTextW(self.edit, wide(text).as_ptr());
-            SendMessageW(self.edit, EM_SETSEL, caret, caret as LPARAM);
+            SetWindowTextW(self.edit, wide(&text.replace('\n', "\r\n")).as_ptr());
+            let at = to_edit_offset(text, caret);
+            SendMessageW(self.edit, EM_SETSEL, at, at as LPARAM);
+        }
+    }
+    fn set_selection(&mut self, start: usize, end: usize) {
+        let text = self.read_text();
+        unsafe {
+            SendMessageW(self.edit, EM_SETSEL, to_edit_offset(&text, start), to_edit_offset(&text, end) as LPARAM);
         }
     }
     fn composing(&mut self) -> bool {
@@ -234,14 +260,13 @@ unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
             Some(pos) => {
                 if ensure {
                     let total = s.shell.editor.view.rows.len();
-                    s.shell.editor.view.first = ensure_visible(s.shell.editor.view.first, pos, total, page);
+                    debug_assert!(pos < total);
+                    s.shell.editor.view.first = s.shell.editor.view.visible_first(pos, page);
                 }
                 let first = s.shell.editor.view.first;
-                let row = &s.shell.editor.view.rows[pos];
-                let in_view = pos >= first && pos <= first + page;
+                let in_view = pos >= first && s.shell.editor.view.slot_of(pos) <= page;
                 if in_view {
-                    let slot = pos - first;
-                    let er = m.edit_rect(s.dpi, row.depth, row.status.is_some(), slot, lay.center.w());
+                    let er = m.row_edit_rect(s.dpi, &s.shell.editor.view, pos, lay.center.w());
                     let (ex, ey) = (er.left + lay.center.l, er.top + lay.center.t);
                     let mut old: RECT = std::mem::zeroed();
                     GetWindowRect(edit, &mut old);
@@ -557,40 +582,51 @@ unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: 
             VK_END => Some(Nav::End),
             _ => None,
         };
-        if vk == VK_ESCAPE && s.shell.editor.view.selection_anchor.is_some() {
+        let selecting = s.shell.editor.view.selection_anchor.is_some();
+        let vertical = vk == VK_UP || vk == VK_DOWN;
+        let up = vk == VK_UP;
+        let toward = if up { Nav::Up } else { Nav::Down };
+        if vk == VK_ESCAPE && selecting {
             s.shell.editor.view.clear_selection();
-        } else if alt && (vk == VK_UP || vk == VK_DOWN) {
-            if shift {
-                s.shell.editor.selection_command(if vk == VK_UP { "up" } else { "down" });
-            } else {
-                s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
-            }
-        } else if shift && (vk == VK_UP || vk == VK_DOWN) {
-            s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
-        } else if (vk == VK_LEFT || vk == VK_RIGHT) && s.shell.editor.view.selection_anchor.is_some() {
-            s.shell.editor.selection_command(if vk == VK_LEFT { "fold" } else { "unfold" });
-        } else if ctrl && !alt && s.shell.editor.view.selection_anchor.is_some() && matches!(vk, 0x43 | 0x58 | 0x56) {
+        } else if alt && shift && vertical {
+            s.shell.editor.selection_command(if up { "move_up" } else { "move_down" });
+        } else if (alt || shift) && !ctrl && vertical {
+            s.shell.editor.view.extend_selection(toward, page);
+        } else if ctrl && !alt && (vertical || vk == VK_OEM_1) {
+            s.shell.editor.selection_command(if vk == VK_OEM_1 { "toggle_collapse" } else if up { "collapse" } else { "expand" });
+        } else if (vk == VK_LEFT || vk == VK_RIGHT) && selecting {
+            s.shell.editor.selection_command(if vk == VK_LEFT { "collapse" } else { "expand" });
+        } else if ctrl && !alt && shift && vk == b'A' as u16 {
+            s.shell.editor.view.select_all();
+        } else if ctrl && !alt && vk == b'A' as u16 && selecting {
+            s.shell.editor.view.select_parent();
+        } else if ctrl && !alt && selecting && matches!(vk, 0x43 | 0x58 | 0x56) {
             if vk == 0x56 {
-                if let Some(text) = clipboard_read(hwnd) { s.shell.editor.selection_paste(&text); }
-            } else {
-                let ids = s.shell.editor.view.selected_block_ids();
-                let markdown = s.shell.editor.view.doc.blocks.iter().filter(|b| ids.contains(&b.id))
-                    .map(|b| {
-                        let status = b.status.as_deref().map(|value| format!("{value} ")).unwrap_or_default();
-                        format!("{}- {status}{}", " ".repeat(b.indent), b.text)
-                    }).collect::<Vec<_>>().join("\r\n");
-                clipboard_write(hwnd, &markdown);
-                if vk == 0x58 { s.shell.editor.selection_command("delete"); }
+                if let Some(text) = clipboard_read(hwnd) {
+                    s.shell.editor.selection_paste(&text);
+                }
+            } else if let Some(markdown) = s.shell.editor.selection_command(if vk == 0x58 { "cut" } else { "copy" }) {
+                clipboard_write(hwnd, &markdown.replace('\n', "\r\n"));
             }
-        } else if (vk == 0x2E || vk == VK_TAB) && s.shell.editor.view.selection_anchor.is_some() {
-            s.shell.editor.selection_command(if vk == 0x2E { "delete" } else if shift { "outdent" } else { "indent" });
+        } else if (vk == 0x2E || vk == 0x08) && selecting {
+            s.shell.editor.selection_command("delete_selection");
+        } else if vk == VK_TAB && selecting {
+            s.shell.editor.selection_command(if shift { "outdent" } else { "indent" });
         } else if ctrl && vk == VK_RETURN {
-            s.shell.editor.nav_command(Cmd::Toggle);
+            if selecting {
+                s.shell.editor.selection_command("cycle_todo");
+            } else {
+                s.shell.editor.nav_command(Cmd::Toggle);
+            }
         } else if let Some(nav) = nav {
             s.shell.editor.view.select(nav, page);
+            if selecting && vertical {
+                s.shell.editor.view.select_current();
+            }
         } else if vk == VK_LEFT || vk == VK_RIGHT {
             s.shell.editor.view.set_fold(vk == VK_LEFT, page);
         } else if vk == VK_RETURN || vk == VK_F2 {
+            s.shell.editor.view.clear_selection();
             s.shell.editor.start_edit_selected();
         } else if vk == VK_TAB {
             s.shell.editor.nav_command(if shift { Cmd::Outdent } else { Cmd::Indent });
@@ -709,7 +745,7 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
         let (cx, cy) = (x - lay.center.l, y - lay.center.t);
         let m = Metrics::new(s.dpi);
         let page = m.page_rows(lay.center.h());
-        let row = row_at(cy, m.header_h, m.row_h, s.shell.editor.view.first, s.shell.editor.view.rows.len());
+        let row = s.shell.editor.view.row_at(cy, m.header_h, m.row_h);
         if let Some(i) = row {
             let r = s.shell.editor.view.rows[i].clone();
             let block = r.block;
@@ -827,7 +863,33 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     None => KeyResult::Pass,
                 };
                 ui_sync(parent, true);
+                EAT_CONTROL_CHAR.store(result == KeyResult::Swallow, Ordering::SeqCst);
                 if result == KeyResult::Swallow {
+                    return 0;
+                }
+                if ev.ctrl && !ev.alt && !processkey && vk == b'A' as u16 && !ev.shift {
+                    SendMessageW(hwnd, EM_SETSEL, 0, -1);
+                    EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                    return 0;
+                }
+                if ev.ctrl && !ev.alt && ev.shift && !processkey && vk == b'V' as u16 {
+                    if let (Some(s), Some(text)) = (state(parent), clipboard_read(parent)) {
+                        s.shell.editor.paste_inline(&text);
+                        ui_sync(parent, true);
+                        EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                        return 0;
+                    }
+                }
+            }
+            WM_PASTE => {
+                if let (Some(s), Some(text)) = (state(parent), clipboard_read(parent)) {
+                    if s.shell.editor.paste_text(&text, now_ms()) {
+                        ui_sync(parent, true);
+                        return 0;
+                    }
+                    // 한 줄: 줄 끝 문자를 떼고 그대로 넣는다.
+                    let one = wide(text.trim_end_matches(['\r', '\n']));
+                    SendMessageW(hwnd, EM_REPLACESEL, 1, one.as_ptr() as LPARAM);
                     return 0;
                 }
             }
@@ -846,7 +908,16 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     }
                 }
             }
-            WM_CHAR if wp == 9 || wp == 13 || wp == 10 || wp == 27 => return 0,
+            WM_CHAR if wp == 9 || wp == 13 || wp == 10 || wp == 27 || wp == 1 => return 0,
+            WM_CHAR if wp < 32 && EAT_CONTROL_CHAR.load(Ordering::SeqCst) => return 0,
+            WM_CHAR if wp < 128 && b"[](){}`".contains(&(wp as u8)) && !ctrl_down() => {
+                if let Some(s) = state(parent) {
+                    if s.shell.editor.typed_char(wp as u8 as char) {
+                        ui_sync(parent, true);
+                        return 0;
+                    }
+                }
+            }
             WM_IME_STARTCOMPOSITION => COMPOSING.store(true, Ordering::SeqCst),
             WM_IME_ENDCOMPOSITION => {
                 let r = CallWindowProcW(orig, hwnd, msg, wp, lp);
@@ -876,7 +947,7 @@ unsafe fn create_edit(parent: HWND, hinst: HINSTANCE, font: HFONT, dpi: u32) -> 
             0,
             class.as_ptr(),
             null(),
-            WS_CHILD | ES_AUTOHSCROLL as u32 | ES_LEFT as u32,
+            WS_CHILD | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_AUTOHSCROLL as u32 | ES_LEFT as u32,
             0,
             0,
             10,
@@ -1388,8 +1459,9 @@ impl Harness {
                 BitBlt(mem, origin.x, origin.y, ew, eh, edc, 0, 0, SRCCOPY);
 
                 // 캐럿(시험용 그림에는 실제 캐럿이 안 찍히므로 같은 위치에 선을 긋는다).
-                let (start, _) = s.shell.editor.host.selection();
-                let pos = SendMessageW(edit, EM_POSFROMCHAR, start, 0) as u32;
+                let mut start = 0u32;
+                SendMessageW(edit, EM_GETSEL, &mut start as *mut u32 as WPARAM, 0);
+                let pos = SendMessageW(edit, EM_POSFROMCHAR, start as WPARAM, 0) as u32;
                 let cx = origin.x + (pos & 0xFFFF) as i16 as i32;
                 let pen = CreatePen(PS_SOLID, crate::paint::scale(2, s.dpi), pal.text);
                 let op = SelectObject(mem, pen);
@@ -1418,6 +1490,14 @@ impl Harness {
                 return Err("캡처 실패(GetDIBits)".into());
             }
             Ok(Shot { width: w as usize, height: h as usize, bgra: pixels })
+        }
+    }
+
+    /// EDIT 에 문자 메시지를 보낸다(시험용).
+    pub fn send_char(&mut self, ch: u16) {
+        unsafe {
+            let edit = self.state.as_ref().map(|s| s.shell.editor.host.edit).unwrap_or(null_mut());
+            SendMessageW(edit, WM_CHAR, ch as WPARAM, 0);
         }
     }
 

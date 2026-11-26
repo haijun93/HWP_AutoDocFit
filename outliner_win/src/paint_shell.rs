@@ -256,10 +256,9 @@ pub fn edit_rect_of<H: EditHost>(shell: &Shell<H>, lay: &Layout) -> Option<R> {
     let pos = ed.view.rows.iter().position(|r| r.block == block)?;
     let m = Metrics::new(lay.dpi);
     let page = m.page_rows(lay.center.h());
-    if pos < ed.view.first || pos > ed.view.first + page {
+    if pos < ed.view.first || ed.view.slot_of(pos) > page {
         return None;
     }
-    let row = &ed.view.rows[pos];
-    let e = m.edit_rect(lay.dpi, row.depth, row.status.is_some(), pos - ed.view.first, lay.center.w());
+    let e = m.row_edit_rect(lay.dpi, &ed.view, pos, lay.center.w());
     Some(R::new(e.left, e.top, e.right, e.bottom))
 }
