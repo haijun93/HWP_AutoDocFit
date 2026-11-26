@@ -23,6 +23,7 @@ from docfit_core.progress_guide import guide_state, progress_view
 from docfit_core.stage_selection import STAGE_EXAMPLES, default_choice, stages_for_mode
 from docfit_app.api_contract import response
 from docfit_app.package_integrity import check_frozen_package
+from docfit_app import screen_mode
 from docfit_app.app_state import STAGE_ORDER
 from docfit_core.file_conversion import IMAGE_INPUT_EXTENSIONS
 from docfit_core.file_conversion import CONVERSION_INPUTS as SUPPORTED_INPUT_EXTENSIONS, CONVERSION_OUTPUTS
@@ -149,10 +150,11 @@ class DesktopWebBridge:
         # 몽땅검색 서비스는 화면을 처음 열 때 만들어지므로, 업데이트로 검색 색인이 비었을 때의 복구 점검이
         # 앱만 켜서는 돌지 않았다(v2.2.69 후보 실기). 시작 30초 뒤 백그라운드에서 한 번 만들어 둔다.
         # 배포 앱(묶음 실행 파일)에서만: 시험이 만든 화면 연결부가 실제 사용자 폴더에 서비스를 만들지 않게.
-        if getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False) and screen_mode.current() is None:
             startup = threading.Timer(30, self._prepare_timemachine_service)
             startup.daemon = True
             startup.start()
+        if getattr(sys, "frozen", False):
             # 설치가 중간에 끊겨 Win32 창 프로그램이 빠졌는지 시작 때 한 번 점검해 로그에 남긴다(PKGWIN1).
             check = threading.Timer(5, check_frozen_package)
             check.daemon = True
@@ -2530,6 +2532,8 @@ class DesktopWebBridge:
             threading.Thread(target=dispatch, daemon=True).start()
 
     def dock_start(self):
+        if screen_mode.current() is not None:
+            return {"started": False}  # 전용 창은 하단 Dock 을 켜지 않는다.
         return self._dock_runtime().start()
 
     def dock_ready(self, timeout_ms):
@@ -4356,11 +4360,13 @@ def run_webview(gui):
     x = max(0, (screen_width - width) // 2)
     y = max(0, (screen_height - height) // 2)
 
+    screen = screen_mode.current()
     window = webview.create_window(
-        f"{APP_NAME} · v{APP_VERSION}",
+        f"{APP_NAME} · v{APP_VERSION}" if screen is None else screen_mode.window_title(screen),
         # A filesystem path activates pywebview's local HTTP asset server;
         # file:// URLs bypass it and cannot load Flutter's WASM/font assets.
-        url=str(page),
+        # 전용 창은 화면 번호를 주소 조각으로 넘긴다: 화면이 첫 그림부터 메뉴 없이 그린다(Tk 준비를 기다리지 않음).
+        url=str(page) if screen is None else f"{page}#screen={screen}",
         js_api=_BrowserApi(bridge),
         width=width,
         height=height,
@@ -4440,7 +4446,8 @@ def run_webview(gui):
             def queue_conversion_paths(paths, target):
                 threading.Thread(target=bridge.open_conversion_paths, args=(paths, target),
                                  name="convert-pipe-dispatch", daemon=True).start()
-            convert_receiver = ConvertPipeReceiver(queue_conversion_paths).start()
+            if screen_mode.current() is None:  # 파이프는 보통 앱 하나만 받는다.
+                convert_receiver = ConvertPipeReceiver(queue_conversion_paths).start()
         except Exception:
             logging.getLogger(__name__).exception("몽땅파일변환 파이프 수신기를 시작하지 못했습니다")
         # 첫 화면이 뜬 뒤에야 부가 시작 작업(런타임 배포·kfind 확인)을 시작한다(LAUNCH2).
@@ -4468,6 +4475,17 @@ def run_webview(gui):
                 bridge.start_tk_heartbeat()
         except Exception:
             logging.getLogger(__name__).exception("Could not initialize freeze tracer")
+        threading.Thread(
+            target=stop_webview_when_app_exits,
+            args=(web_window,),
+            name="webview-shutdown-watch",
+            daemon=True,
+        ).start()
+        # 상주 도우미 점검·파이프는 보통 앱 하나만 맡는다(전용 창 여러 개가 겹쳐 하지 않게).
+        if screen_mode.current() is None:
+            start_resident_services()
+
+    def start_resident_services():
         # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
         try:
             from docfit_app.kagent_app_service import start_background, set_photo_edit_handler
@@ -4495,18 +4513,13 @@ def run_webview(gui):
         threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
         # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.
         try:
+            from docfit_app.configuration_service import ConfigurationService
             from docfit_app.ktm_service import SETTING_KEY, sync_in_background
             ktm_values = ConfigurationService(bridge._settings_store()).snapshot(
                 running=gui.running).get('values', {})
             sync_in_background(bool(ktm_values.get(SETTING_KEY, True)))
         except Exception:
             logging.getLogger(__name__).exception("몽땅검색 점검 시작 실패")
-        threading.Thread(
-            target=stop_webview_when_app_exits,
-            args=(web_window,),
-            name="webview-shutdown-watch",
-            daemon=True,
-        ).start()
 
     # 창 아이콘: 지정하지 않으면 실행 파일(python.exe 또는 exe)의 아이콘을 쓴다.
     아이콘 = {"icon": APP_ICON} if APP_ICON and Path(APP_ICON).is_file() else {}

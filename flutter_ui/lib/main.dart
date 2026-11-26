@@ -198,16 +198,24 @@ class DocFitApp extends StatelessWidget {
     super.key,
     this.api = bridge.callApi,
     this.useIntegratedShell = true,
+    this.soloTab,
   });
   final ApiCall api;
   final bool useIntegratedShell;
+
+  /// 전용 창의 화면 번호. 보통은 주소에서 읽는다(시험에서만 직접 준다).
+  final int? soloTab;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: appThemeListenable(),
     builder: (context, _) {
       // 고대비가 켜져 있으면 Flutter가 highContrast(Dark)Theme을 고른다(시스템 색 우선).
       final highContrast = highContrastAppTheme();
+      final solo = soloTab ?? soloTabFrom(Uri.base);
+      final Widget home = useIntegratedShell ? _IntegratedHome(api: api, soloTab: solo) : Workspace(api: api);
       return MaterialApp(
+        // 전용 창의 주소 조각(#screen=N)은 화면 경로가 아니므로 첫 경로로 해석하지 않는다.
+        onGenerateInitialRoutes: solo == null ? null : (_) => [MaterialPageRoute<void>(builder: (_) => home)],
         title: '한글편집 후처리',
         debugShowCheckedModeBanner: false,
         theme: lightAppTheme,
@@ -215,7 +223,7 @@ class DocFitApp extends StatelessWidget {
         highContrastTheme: highContrast,
         highContrastDarkTheme: highContrast,
         themeMode: appThemeChoice.value.mode,
-        home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+        home: home,
       );
     },
   );
@@ -226,8 +234,9 @@ class DocFitApp extends StatelessWidget {
 /// 파일변환 탭: 문서편집 상태(_WorkspaceState)를 읽어 3단 화면을 그린다. 처음에는 상태가 만들어지길 기다린다.
 
 class _IntegratedHome extends StatefulWidget {
-  const _IntegratedHome({required this.api});
+  const _IntegratedHome({required this.api, this.soloTab});
   final ApiCall api;
+  final int? soloTab;
   @override
   State<_IntegratedHome> createState() => _IntegratedHomeState();
 }
@@ -246,12 +255,15 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     super.initState();
     unawaited(widget.api('get_state', []).then((value) {
       if (!mounted || value is! Map) return;
-      unawaited(DockModeController(
-        api: widget.api,
-        runtime: ProcessDockRuntime(widget.api),
-        showSidebar: () async { sidebarModeVisible.value = true; },
-        hideSidebar: () async { sidebarModeVisible.value = false; },
-      ).restore(value['menu_display_mode'] as String?));
+      // 전용 창은 저장된 하단 Dock 방식을 되살리지 않는다.
+      if (widget.soloTab == null) {
+        unawaited(DockModeController(
+          api: widget.api,
+          runtime: ProcessDockRuntime(widget.api),
+          showSidebar: () async { sidebarModeVisible.value = true; },
+          hideSidebar: () async { sidebarModeVisible.value = false; },
+        ).restore(value['menu_display_mode'] as String?));
+      }
       setState(() {
         developerMode = value['developer_mode'] == true;
       });
@@ -326,6 +338,17 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
 
   /// 숨긴 메뉴의 화면은 열 수 없다.
   String? _handoffBlocked(FileTarget target) {
+    final solo = widget.soloTab;
+    if (solo != null) {
+      final wanted = switch (target) {
+        FileTarget.virtualFolder => 12,
+        FileTarget.notebook => 13,
+        FileTarget.pdfEdit => kTabPdfEdit,
+        FileTarget.conversion => kTabFileConversion,
+        FileTarget.documentEditor => 0,
+      };
+      if (wanted != solo) return '이 창에서는 다른 화면으로 보낼 수 없습니다. 사이드바에서 그 메뉴를 열어 파일을 넣어 주세요.';
+    }
     final tab = switch (target) {
       FileTarget.conversion => kTabFileConversion,
       FileTarget.pdfEdit => kTabPdfEdit,
@@ -427,6 +450,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
 
   Widget _workspace(Set<int> hiddenTabs, bool showSidebar) => IntegratedWorkspace(
     api: widget.api,
+    soloTab: widget.soloTab,
     hiddenTabs: {...kDefaultHiddenTabs, ...hiddenTabs},
     tabRequest: tabRequest,
     photoPasteTrigger: photoPasteTrigger,

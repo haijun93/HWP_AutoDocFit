@@ -1,6 +1,8 @@
 //! Pure layout and menu model for the native bottom dock.
 use serde::{Deserialize, Serialize};
 
+pub mod sidebar;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub left: i32,

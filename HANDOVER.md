@@ -353,6 +353,14 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 
 ---
 
+### 사이드바 실행 방식 (RUSTSIDE1, 2026-11-26 — 선택 기능, 기본 아님)
+
+- `sidebar.exe`(`dock` 크레이트의 `src/bin/sidebar.rs`, 판단은 `src/sidebar.rs`). 메뉴마다 창 1개를 연다. Rust 창이 없는 메뉴는 앱을 `--screen N`(`docfit_app/screen_mode.py`)으로 연다.
+- 고르는 법: `sidebar.exe` 직접 실행, 앱에 `--sidebar`, 또는 설정 `launch_mode: "sidebar"`(`--full-app` 이면 무시). 자동 숨김은 기존 키 `dock_auto_hide`.
+- 전용 창에서는 상주 도우미 점검·파이프·업데이트 확인을 하지 않는다. 새 시작 작업을 넣을 때 전용 창에서도 돌려야 하는지 정할 것.
+- 메뉴를 더하거나 이름을 바꾸면 `sidebar.rs` 의 `label`, `screen_mode.SCREENS`, Flutter `_labels` 를 함께 고친다(시험이 대조).
+- 결과 `docs/RUSTSIDE1_RESULT_2026-11-26.md`, 다음 일 `docs/RUSTSIDE1_PLAN_2026-11-26.md`.
+
 ## 4. 핵심 동작 이해
 
 ### 작업 유형 (실행창 카드 3장, v1.69 Beta 6부터)

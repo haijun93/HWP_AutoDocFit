@@ -304,6 +304,8 @@ begin
   StopHelper('convert_win.exe');
   // 파일명 변경 미리보기 창(rename_win.exe)이 열려 있으면 설치 파일 교체를 막는다.
   StopHelper('rename_win.exe');
+  // 사이드바(sidebar.exe)는 계속 떠 있는 창이라 {app} 안 파일을 붙잡는다.
+  StopHelper('sidebar.exe');
   Sleep(500);
   // 앱·도우미를 끝낸 뒤에도 잠긴 파일(색인 서비스의 kfind.exe 등)은 이름을 바꿔 둔다.
   CleanStaleOld;
