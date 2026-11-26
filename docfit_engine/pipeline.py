@@ -54,7 +54,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             """문서 처리 본체를 부르며 단계별 소요 시간을 작업 로그에 남긴다(동작은 같다)."""
             단계시간_시작()
             try:
-                return _문서_처리_본체(파일, index, total, 문장부호기능)
+                result = _문서_처리_본체(파일, index, total, 문장부호기능)
+                from docfit_engine.edit_failures import check_required_edits
+                check_required_edits()
+                return result
             finally:
                 표 = 단계시간_끝()
                 if 표:
@@ -65,6 +68,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(문서_처리, _docfit_namespace)
     if _docfit_symbol == '_문서_처리_본체':
         def _문서_처리_본체(파일, index, total, 문장부호기능=True):
+            # 실패 상태는 문서마다 초기화하며, 다음 문서에 전염시키지 않는다.
+            globals()['_필수수정_실패'] = None
             gui_queue.put(("doc_begin", index, total, Path(str(파일)).name))   # 진행 화면의 문서 순번
             global hwp, 현재_처리파일, 한칸표_보호영역, 디자인표_보호영역, 디자인표_확인, 최종검수_문서목록
             global 쪽범위_본문_문단, 쪽범위_컨트롤영역, 쪽범위_실제, 기본표서식_적용됨
@@ -274,6 +279,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
 
             # ② 보고서 표준서식. 쪽 범위는 위에서 이미 문단 번호로 고정했다.
             결과 = 표준서식_선행_적용(파일명)
+            from docfit_engine.edit_failures import check_required_edits
+            check_required_edits()
             if 결과 is False:
                 return False
             문서_변경됨 = 문서_변경됨 or bool(결과)
@@ -288,7 +295,16 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     and stage_enabled(선택_세부작업, 'text_table_convert')):
                 단계표시("텍스트 표(박스 그림) 변환")
                 상태(f"{파일명} : 텍스트 표(박스 그림) 변환")
-                if 박스그림_전체_적용() is False:
+                from docfit_engine.context import current_context
+                from docfit_engine.box_table_rollback import protect_box_replacements, BoxTableCancelled
+                try:
+                    with protect_box_replacements(
+                            current_context().state, save=_제목_임시hwpx_저장,
+                            reopen=lambda path: 한글_문서_열기(hwp, path, 'HWPX', 'forceopen:true'),
+                            cleanup=_제목_임시폴더_정리, cancelled=중단_요청됨, log=로그):
+                        if 박스그림_전체_적용() is False:
+                            return False
+                except BoxTableCancelled:
                     return False
                 박스그림_실행 = True
 
@@ -507,7 +523,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 푼수 = 문서_쪽나누기_전체해제(보존 | 묶음보존)
                 if 푼수 or 묶음보존:
                     로그(f"저장 전 쪽 나누기 {푼수}개 해제(보고서 경계 {len(보존)}곳·쪽 배치 묶음 {len(묶음보존)}곳은 유지)")
-            저장파일 = 저장파일명(파일)
+            # 같은 이름의 결과가 있으면 덮어쓰지 않고 번호를 붙인다(손본 이전 결과·a.hwp/a.hwpx 충돌 보호).
+            from docfit_core.output_naming import available_output_path
+            기본_저장파일 = 저장파일명(파일)
+            저장파일 = available_output_path(기본_저장파일)
+            if 저장파일 != 기본_저장파일:
+                로그(f"같은 이름의 결과가 있어 덮어쓰지 않고 새 이름으로 저장합니다: {Path(저장파일).name}")
             단계표시("저장")
             상태(f"{파일명} : {총회차}회 처리 완료 / 최종 저장 중")
             처리쪽수 = 처리_쪽수_구하기()
@@ -517,6 +538,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     로그(f"[저장 진단] 열린 문서 {문서수}개 — 활성 문서를 저장합니다")
             except Exception:
                 pass
+            check_required_edits()  # 내부 호출부가 필수 수정 예외를 잡았어도 저장하지 않는다.
             저장결과 = hwp.SaveAs(Path=저장파일, Format="HWPX", arg="")
             if 저장결과 is False:
                 raise RuntimeError(f"문서 저장에 실패했습니다: {저장파일}")
@@ -806,7 +828,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 시작_인덱스 > 1:
                     로그(f"이전에 중단된 작업을 이어서 진행합니다: {시작_인덱스}/{total}번째 문서부터")
                     for 완료파일 in 파일목록[:시작_인덱스 - 1]:
-                        기존결과 = 저장파일명(완료파일)
+                        from docfit_core.output_naming import latest_output_path
+                        기존결과 = latest_output_path(저장파일명(완료파일))
                         최종검수_문서목록.append({
                             "source": str(완료파일), "output": str(기존결과),
                             "success": Path(기존결과).is_file(), "integrity_ok": None,
@@ -1065,6 +1088,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     hwp_run('Cancel')
                     순회_시작()
                     result = action() is not False
+                    from docfit_engine.edit_failures import check_required_edits
+                    check_required_edits()
                 except BaseException as error:
                     callbacks.on_stage_error(name, error)
                     raise

@@ -959,7 +959,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 act = hwp.CreateAction('CharShape')
                 pset = act.CreateSet()
                 for key, value in zip(_단어모드_장평필드, values):
-                    pset.SetItem(key, max(85, min(150, value + delta)))
+                    pset.SetItem(key, value if delta == 0 else max(85, min(150, value + delta)))
                 if act.Execute(pset) is False:
                     raise RuntimeError('단어 모드 장평 적용 실패')
             hwp_run('Cancel')
@@ -1061,16 +1061,20 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             if 자간값 and any(not 자간_하한 <= v + 자간값 <= 50 for _, _, vs in spacing_runs for v in vs):
                 자간값 = 0
             자간적용됨 = False
+            장평적용됨 = False
             성공 = False
             try:
                 if 자간값:
-                    단어모드_자간적용(spacing_runs, 자간값)
+                    # 실행 도중 일부 run만 바뀌고 예외가 나도 복원한다.
                     자간적용됨 = True
+                    단어모드_자간적용(spacing_runs, 자간값)
                 현재_최소장평 = min((v for _, _, vs in ratio_runs for v in vs), default=100)
                 장평_바닥 = 100 - 단어_장평_추가축소_최대_단계
                 여유_단계 = max(0, min(단어_장평_추가축소_최대_단계, 현재_최소장평 - 장평_바닥))
 
                 def 장평_확인(step):
+                    nonlocal 장평적용됨
+                    장평적용됨 = True
                     단어모드_장평적용(ratio_runs, -step)
                     return 단어모드_줄범위(anchor)[1][2] >= word_end[2]
 
@@ -1081,11 +1085,20 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 성공 = 단계 is not None
                 if 성공:
                     진단로그(f"[단어 분리 보정] 자간 {자간값}%p + 장평 {현재_최소장평 - 단계}%로 해결")
-                elif 여유_단계:
-                    단어모드_장평적용(ratio_runs, 0)
             finally:
-                if not 성공 and 자간적용됨:
-                    단어모드_자간적용(spacing_runs, 0)
+                if not 성공:
+                    # 취소·측정 예외도 같은 복원 경로를 지난다. 한쪽 복원이
+                    # 실패하더라도 다른 속성은 복원을 시도하고 예외는 전파한다.
+                    try:
+                        try:
+                            if 장평적용됨:
+                                단어모드_장평적용(ratio_runs, 0)
+                        finally:
+                            if 자간적용됨:
+                                단어모드_자간적용(spacing_runs, 0)
+                    except Exception as 복원오류:
+                        from docfit_engine.edit_failures import fail_required_edit
+                        fail_required_edit(f'단어 모드 자간·장평 복원 실패: {복원오류}', 복원오류)
             return 성공
         return bind_function(단어_장평_추가축소_시도, _docfit_namespace)
     if _docfit_symbol == '다음단어_당김_시도':
