@@ -1085,6 +1085,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 def 장평_확인(step):
                     nonlocal 장평적용됨
                     장평적용됨 = True
+                    기록 = globals().get('쪽맞춤_장평기록')     # 1쪽 맞춤 중에만: 실패 때 되돌릴 원래 값
+                    if 기록 is not None and ratio_runs not in 기록:
+                        기록.append(ratio_runs)
                     단어모드_장평적용(ratio_runs, -step)
                     return 단어모드_줄범위(anchor)[1][2] >= word_end[2]
 
@@ -1187,8 +1190,19 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 success = True
             if success:
                 다음단어_통계['적용'] += 1
+                칠하기 = True
+                기록 = globals().get('쪽맞춤_색기록')       # 1쪽 맞춤 중에만: 칠하기 직전의 글자색 보관
+                if 기록 is not None and 색상_설정 is not None:
+                    from docfit_engine.layout_restore import read_text_colors
+                    색runs = read_text_colors(hwp, hwp_run, start, boundary, 단어모드_범위선택,
+                                             _단어모드_다음위치, 중단_요청됨)
+                    if 색runs is None:
+                        칠하기 = False                     # 되돌릴 수 없는 색은 칠하지 않는다
+                        진단로그(f"[다음 단어 당김] 원래 글자색 확인 실패로 색 표시 생략 / 위치={anchor}")
+                    elif 색runs not in 기록:
+                        기록.append(색runs)
                 단어모드_범위선택(start, boundary)
-                색상_적용_현재선택()
+                색상_적용_현재선택() if 칠하기 else 색상_적용_현재선택(칠하기=False)
                 hwp_run('Cancel')
                 진단로그(f"[다음 단어 당김 적용] {당김단어!r} / 위치={anchor}")
             else:
