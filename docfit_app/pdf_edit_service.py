@@ -146,7 +146,7 @@ class PdfEditService:
         else:
             args = [action, str(source_path), str(output_path), ','.join(map(str, pages))]
         try:
-            result = self.runner([str(self.executable), *args], capture_output=True, text=True, timeout=300, check=False)
+            result = self.runner([str(self.executable), *args], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True, timeout=300, check=False)
         except (OSError, subprocess.TimeoutExpired):
             raise ServiceError('PDF_ENGINE_FAILED', 'PDF 편집 엔진을 실행하지 못했습니다.') from None
         if result.returncode:
@@ -165,7 +165,7 @@ class PdfEditService:
         if not self.executable.is_file():
             raise ServiceError('PDF_ENGINE_MISSING', 'PDF 편집 엔진(pdf-edit)을 찾을 수 없습니다.')
         try:
-            result = self.runner([str(self.executable), 'info', str(source)], capture_output=True, text=True, timeout=30, check=False)
+            result = self.runner([str(self.executable), 'info', str(source)], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True, timeout=30, check=False)
         except (OSError, subprocess.TimeoutExpired):
             raise ServiceError('PDF_ENGINE_FAILED', 'PDF 페이지 정보를 읽지 못했습니다.') from None
         if result.returncode:

@@ -108,7 +108,7 @@ class OutlinerService:
             raise ServiceError('OUTLINER_ENGINE_MISSING', '아웃라이너 엔진을 찾을 수 없습니다.')
         try:
             result = self.runner([str(self.executable)], input=json.dumps(request, ensure_ascii=False) + '\n',
-                                 capture_output=True, text=True, encoding='utf-8', timeout=30, check=False)
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True, encoding='utf-8', timeout=30, check=False)
             value = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, ValueError):
             raise ServiceError('OUTLINER_ENGINE_FAILED', '아웃라이너 엔진을 실행하지 못했습니다.') from None

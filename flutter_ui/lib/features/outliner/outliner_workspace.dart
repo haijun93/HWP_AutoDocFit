@@ -55,6 +55,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   String? _version;
   String _message = '';
   bool _busy = false;
+  // 명령 처리 중에 누른 Tab·Shift+Tab 은 버리지 않고 끝난 뒤 차례로 적용한다(OUTFLASH1).
+  final List<({String operation, Object? block, String? page})> _queuedIndents = [];
+  Object? _focusTarget; // 지금 명령이 커서를 옮긴 블록
   String _pageQuery = '';
   final _search = TextEditingController();
   final Map<Object, TextEditingController> _editors = {};
@@ -368,6 +371,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }
 
   Future<void> _run(Future<void> Function() action) async {
+    _focusTarget = null;
     setState(() {
       _busy = true;
       _message = '';
@@ -376,10 +380,37 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       await action();
       if (mounted) setState(() {});
     } catch (e) {
+      _queuedIndents.clear(); // 실패한 명령 뒤의 예약은 적용하지 않는다.
       if (mounted) setState(() => _message = '$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+        if (_queuedIndents.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _applyQueuedIndent());
+          WidgetsBinding.instance.scheduleFrame();
+        }
+      }
     }
+  }
+
+  void _applyQueuedIndent() {
+    if (!mounted || _busy || _queuedIndents.isEmpty) return;
+    final next = _queuedIndents.removeAt(0);
+    if (next.page != _page) {
+      _queuedIndents.clear();
+      return;
+    }
+    final id = _focusTarget ?? next.block;
+    final at = _blocks.indexWhere((b) => b['id'] == id);
+    if (at < 0) return;
+    // 이어지는 예약도 같은 블록에 적용되게 한다(_run 이 _focusTarget 을 비운다).
+    final rest = [
+      for (final q in _queuedIndents) (operation: q.operation, block: id, page: q.page),
+    ];
+    _queuedIndents
+      ..clear()
+      ..addAll(rest);
+    _key(next.operation, block: _blocks[at]);
   }
 
   Future<void> _edit(Map block, String operation, [String? text]) async {
@@ -557,6 +588,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   void _focusBlockAfterBuild(Object? id, [int? start, int? end]) {
     if (id == null) return;
+    _focusTarget = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final node = _focusNodes[id];
@@ -793,7 +825,19 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     KeyEvent event,
   ) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
-    if (_busy) return KeyEventResult.handled;
+    if (_busy) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.tab &&
+          _selectedIds.isEmpty &&
+          _queuedIndents.length < 8) {
+        _queuedIndents.add((
+          operation: HardwareKeyboard.instance.isShiftPressed ? 'outdent' : 'indent',
+          block: block['id'],
+          page: _page,
+        ));
+      }
+      return KeyEventResult.handled;
+    }
     final key = event.logicalKey;
     final mods = HardwareKeyboard.instance;
     final ctrl = mods.isControlPressed || mods.isMetaPressed;

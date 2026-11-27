@@ -105,7 +105,7 @@ class QmsBenchService:
             raise ServiceError("ENGINE_MISSING", "벤치마크 엔진(qms_bench)을 찾을 수 없습니다.")
         try:
             proc = self.runner(
-                [str(self.executable), "detect"],
+                [str(self.executable), "detect"], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -149,7 +149,7 @@ class QmsBenchService:
                 try:
                     names_json.write_text(json.dumps(sample_names, ensure_ascii=False), encoding="utf-8")
                     res = self.runner(
-                        [str(self.executable), "sample-queries", str(names_json), "42", "10"],
+                        [str(self.executable), "sample-queries", str(names_json), "42", "10"], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
@@ -228,7 +228,7 @@ class QmsBenchService:
 
             try:
                 proc = self.popen(
-                    cmd,
+                    cmd, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,

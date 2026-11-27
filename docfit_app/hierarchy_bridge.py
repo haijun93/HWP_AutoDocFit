@@ -110,7 +110,7 @@ def run_executable(executable, paragraphs, timeout=TIMEOUT_SECONDS):
     try:
         payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False)
         done = subprocess.run([str(executable)], input=payload.encode("utf-8"),
-                              capture_output=True, timeout=timeout, check=False)
+                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, timeout=timeout, check=False)
         if done.returncode != 0:
             return None
         result = json.loads(done.stdout.decode("utf-8"))
