@@ -359,8 +359,9 @@ class ViewSync:
                     if shown is not None:
                         self._remove_event(shown["path"])
             pending, self._pending = list(self._pending.values()), {}
-            # 방금 쓰는 행은 확인 시각이 함께 들어가므로 다시 갱신하지 않는다.
-            self.db.write(pending, removes=removes, seen=self._seen.difference(record[0] for record in pending))
+            # 삭제 판단은 위의 _seen만 사용한다. 읽는 곳이 없는 seen_at을 확인한 모든 행에
+            # 다시 쓰면 변경 없는 열기에도 전체 DB를 갱신한다. 추가·변경·삭제만 저장한다.
+            self.db.write(pending, removes=removes)
 
     def items(self) -> list[dict[str, Any]]:
         with self._lock:

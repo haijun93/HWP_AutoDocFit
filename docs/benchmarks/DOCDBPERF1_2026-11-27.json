@@ -1,0 +1,1479 @@
+{
+  "baseline_commit": "e038ec73",
+  "python": "3.14.0",
+  "sqlite": "3.50.4",
+  "count": 65000,
+  "repeats": 3,
+  "poll_seconds": 0.12,
+  "source": "synthetic only; service mock with valid metadata or development klib",
+  "klib_sha256": "eabb8a97a87666ba2813f6c97173ddcbb966fd9d566deff9e26ec2cb79c6eb14",
+  "hash_fields": "LibraryDB.load() 8 fields; public rows; events sorted by path/op. Paths relative; seen_at excluded.",
+  "before": [
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "first",
+      "total": 5.564017800032161,
+      "first": 0.3092539000790566,
+      "all_shown": 2.1088268000166863,
+      "last_event": 2.1088268000166863,
+      "bridge": 0.9094419996254146,
+      "timings": {
+        "sql": 2.791624299949035,
+        "load": 0.011317400028929114,
+        "snapshot": 0.011329300003126264,
+        "feed": 1.2094486106652766,
+        "source": 2.3732330999337137,
+        "write": 3.020962700014934,
+        "finish": 3.0521122000645846,
+        "items": 0.026780700078234076
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "cached",
+      "total": 5.618663299945183,
+      "first": 0.5756861999398097,
+      "all_shown": 1.5316124999662861,
+      "last_event": 1.5316124999662861,
+      "bridge": 0.6013081996934488,
+      "timings": {
+        "sql": 3.4037645999342203,
+        "load": 0.4551748000085354,
+        "snapshot": 1.0146971000358462,
+        "feed": 0.5363854005699977,
+        "source": 1.342153099947609,
+        "write": 3.173689000075683,
+        "finish": 3.1939149000681937,
+        "items": 0.01986860006581992
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "changed",
+      "total": 6.789496000041254,
+      "first": 0.6092425000388175,
+      "all_shown": 1.8459697000216693,
+      "last_event": 2.858750300016254,
+      "bridge": 0.844623799668625,
+      "timings": {
+        "sql": 4.139732100069523,
+        "load": 0.4486986000556499,
+        "snapshot": 1.1389068000717089,
+        "feed": 0.503171531832777,
+        "source": 1.4893825999461114,
+        "stat": 0.12881179933901876,
+        "write": 3.905797699932009,
+        "finish": 4.06270140002016,
+        "items": 0.039349099970422685
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "first",
+      "total": 11.51237710006535,
+      "first": 0.2238156000385061,
+      "all_shown": 5.075992700061761,
+      "last_event": 5.075992700061761,
+      "bridge": 0.8504377997014672,
+      "timings": {
+        "sql": 5.573093399871141,
+        "load": 0.01560109993442893,
+        "snapshot": 0.015615000040270388,
+        "feed": 1.0244902977719903,
+        "source": 5.384725800016895,
+        "write": 5.828749599982984,
+        "finish": 5.880908699939027,
+        "items": 0.03570809995289892
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25677824
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "cached",
+      "total": 8.9152502999641,
+      "first": 0.7429364999989048,
+      "all_shown": 2.0830561999464408,
+      "last_event": 2.0830561999464408,
+      "bridge": 0.9856898993020877,
+      "timings": {
+        "sql": 3.4173544000368565,
+        "load": 0.5658599999733269,
+        "snapshot": 1.6204368999460712,
+        "feed": 0.5368231027387083,
+        "source": 3.9923847999889404,
+        "write": 3.129906899994239,
+        "finish": 3.161432299995795,
+        "items": 0.03444750001654029
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25677824
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "changed",
+      "total": 10.911431399988942,
+      "first": 0.8863063999451697,
+      "all_shown": 2.3006259000394493,
+      "last_event": 5.984670700039715,
+      "bridge": 1.0736302003497258,
+      "timings": {
+        "sql": 5.265806099982001,
+        "load": 0.72619489999488,
+        "snapshot": 1.8656009000260383,
+        "feed": 0.5197915973840281,
+        "source": 3.8891112999990582,
+        "stat": 0.1703461002325639,
+        "write": 4.841320600011386,
+        "finish": 5.048999999999069,
+        "items": 0.027260600007139146
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25812992
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "first",
+      "total": 4.881968799978495,
+      "first": 0.26658619998488575,
+      "all_shown": 1.8138620000099763,
+      "last_event": 1.8138620000099763,
+      "bridge": 0.7416626000776887,
+      "timings": {
+        "sql": 2.663293999969028,
+        "load": 0.01592999999411404,
+        "snapshot": 0.01594489999115467,
+        "feed": 0.974931987002492,
+        "source": 1.8942908000899479,
+        "write": 2.7983826000709087,
+        "finish": 2.8251930000260472,
+        "items": 0.02237510005943477
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "cached",
+      "total": 6.767376700066961,
+      "first": 0.8365635999944061,
+      "all_shown": 2.4549806000432,
+      "last_event": 2.4549806000432,
+      "bridge": 0.9676962998928502,
+      "timings": {
+        "sql": 3.721721300156787,
+        "load": 0.7436042999615893,
+        "snapshot": 1.8156370000215247,
+        "feed": 0.5500695136142895,
+        "source": 1.5012834999943152,
+        "write": 3.3459270999301225,
+        "finish": 3.364480899996124,
+        "items": 0.029131700051948428
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "changed",
+      "total": 7.683649000013247,
+      "first": 0.7182151000015438,
+      "all_shown": 2.1535624000243843,
+      "last_event": 3.462341299979016,
+      "bridge": 1.0542235006578267,
+      "timings": {
+        "sql": 4.533849600004032,
+        "load": 0.5257494000252336,
+        "snapshot": 1.572972199996002,
+        "feed": 0.5988838959019631,
+        "source": 1.5878371000289917,
+        "stat": 0.15095400030259043,
+        "write": 4.24720330000855,
+        "finish": 4.426726100035012,
+        "items": 0.02607779996469617
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "first",
+      "total": 8.931645600008778,
+      "first": 0.19299059989862144,
+      "all_shown": 4.4820852999109775,
+      "last_event": 4.4820852999109775,
+      "bridge": 0.7279531004605815,
+      "timings": {
+        "sql": 3.352137599955313,
+        "load": 0.012494000024162233,
+        "snapshot": 0.012506900005973876,
+        "feed": 0.926823204383254,
+        "source": 4.8534929000306875,
+        "write": 3.839011700008996,
+        "finish": 3.8790351999923587,
+        "items": 0.052383599919267
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25595904
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "cached",
+      "total": 8.589709099964239,
+      "first": 0.7260634999256581,
+      "all_shown": 1.8376594999572262,
+      "last_event": 1.8376594999572262,
+      "bridge": 0.8170465999282897,
+      "timings": {
+        "sql": 3.984203400206752,
+        "load": 0.5533855999819934,
+        "snapshot": 1.3270233999937773,
+        "feed": 0.4002228897297755,
+        "source": 3.347747400053777,
+        "write": 3.705629999982193,
+        "finish": 3.7429418999236077,
+        "items": 0.04131130001042038
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25595904
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "changed",
+      "total": 10.787689800024964,
+      "first": 1.3091524000046775,
+      "all_shown": 3.400162299978547,
+      "last_event": 7.0302559999981895,
+      "bridge": 1.3436559999827296,
+      "timings": {
+        "sql": 4.390941300080158,
+        "load": 1.1153852000134066,
+        "snapshot": 3.2526696999557316,
+        "feed": 0.5017701102187857,
+        "source": 3.512683199951425,
+        "stat": 0.145043000462465,
+        "write": 3.697448700084351,
+        "finish": 3.8784698001109064,
+        "items": 0.028046999941579998
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25731072
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "first",
+      "total": 6.807039799983613,
+      "first": 0.37294909998308867,
+      "all_shown": 2.297808100003749,
+      "last_event": 2.297808100003749,
+      "bridge": 0.835547000169754,
+      "timings": {
+        "sql": 3.8049717999529094,
+        "load": 0.011222400004044175,
+        "snapshot": 0.011233799974434078,
+        "feed": 1.3338518862146884,
+        "source": 2.411689600092359,
+        "write": 4.038991900044493,
+        "finish": 4.0808100999565795,
+        "items": 0.026967499987222254
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "cached",
+      "total": 6.6596724999835715,
+      "first": 0.777913499972783,
+      "all_shown": 2.2411644998937845,
+      "last_event": 2.2411644998937845,
+      "bridge": 0.987316100508906,
+      "timings": {
+        "sql": 3.798895899904892,
+        "load": 0.5839840000262484,
+        "snapshot": 1.4649507999420166,
+        "feed": 0.568799999775365,
+        "source": 1.594945100019686,
+        "write": 3.4971988999750465,
+        "finish": 3.5250054000644013,
+        "items": 0.02723210002295673
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "changed",
+      "total": 7.618667999980971,
+      "first": 0.6668970000464469,
+      "all_shown": 2.0507180000422522,
+      "last_event": 3.1136699999915436,
+      "bridge": 0.847300699679181,
+      "timings": {
+        "sql": 4.619410599814728,
+        "load": 0.592069000005722,
+        "snapshot": 1.4113809000700712,
+        "feed": 0.45889051351696253,
+        "source": 1.4725997000932693,
+        "stat": 0.16253890027292073,
+        "write": 4.37333580001723,
+        "finish": 4.568867899943143,
+        "items": 0.031767699983902276
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "first",
+      "total": 7.380571199930273,
+      "first": 0.19333649997133762,
+      "all_shown": 3.0177165999775752,
+      "last_event": 3.0177165999775752,
+      "bridge": 0.5426104001235217,
+      "timings": {
+        "sql": 3.4419176999945194,
+        "load": 0.011949100065976381,
+        "snapshot": 0.011959800031036139,
+        "feed": 0.6662927898578346,
+        "source": 3.3007009000284597,
+        "write": 3.8377794000552967,
+        "finish": 3.8868167999899015,
+        "items": 0.05299939995165914
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25546752
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "cached",
+      "total": 8.618048299918883,
+      "first": 0.6699505000142381,
+      "all_shown": 1.9512502999277785,
+      "last_event": 1.9512502999277785,
+      "bridge": 0.9697559998603538,
+      "timings": {
+        "sql": 3.9302768000634387,
+        "load": 0.47178300004452467,
+        "snapshot": 1.5841248999349773,
+        "feed": 0.4181807952700183,
+        "source": 3.1927620000205934,
+        "write": 3.687455100007355,
+        "finish": 3.71182989992667,
+        "items": 0.03986080002505332
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25546752
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "changed",
+      "total": 11.34081929991953,
+      "first": 0.698561399942264,
+      "all_shown": 1.7952350999694318,
+      "last_event": 5.5729653999442235,
+      "bridge": 0.72843819973059,
+      "timings": {
+        "sql": 5.93440239992924,
+        "load": 0.5595108999405056,
+        "snapshot": 1.4246927000349388,
+        "feed": 0.5101947034709156,
+        "source": 3.8501456999219954,
+        "stat": 0.1969910003244877,
+        "write": 5.693185899988748,
+        "finish": 5.933970500016585,
+        "items": 0.04168100003153086
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25686016
+    }
+  ],
+  "after": [
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "first",
+      "total": 5.781293099978939,
+      "first": 0.2655259999446571,
+      "all_shown": 2.1992823999607936,
+      "last_event": 2.1992823999607936,
+      "bridge": 0.8297059999313205,
+      "timings": {
+        "sql": 2.9985755999805406,
+        "load": 0.011976599926128983,
+        "snapshot": 0.011989600025117397,
+        "feed": 1.2454989050747827,
+        "source": 2.3469875999726355,
+        "write": 3.2881318000145257,
+        "finish": 3.3029408000875264,
+        "items": 0.026391500025056303
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "cached",
+      "total": 2.8492223999928683,
+      "first": 0.6435284999897704,
+      "all_shown": 1.7410155000397936,
+      "last_event": 1.7410155000397936,
+      "bridge": 0.7879469995386899,
+      "timings": {
+        "sql": 0.2779448999790475,
+        "load": 0.47550880000926554,
+        "snapshot": 1.1790570999728516,
+        "feed": 0.5705141081707552,
+        "source": 1.5417299999389797,
+        "write": 1.1999974958598614e-05,
+        "finish": 0.02069949998985976,
+        "items": 0.038153499946929514
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 1,
+      "source": "service",
+      "phase": "changed",
+      "total": 3.871106499922462,
+      "first": 0.6443444999167696,
+      "all_shown": 1.8307901999214664,
+      "last_event": 3.1472465000115335,
+      "bridge": 0.7476649002637714,
+      "timings": {
+        "sql": 0.9323683000402525,
+        "load": 0.4765864999499172,
+        "snapshot": 1.2558264000108466,
+        "feed": 0.4750396312447265,
+        "source": 1.6365498999366537,
+        "stat": 0.19856450089719146,
+        "write": 0.6605322000104934,
+        "finish": 0.8896961999125779,
+        "items": 0.028959100018255413
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "first",
+      "total": 8.457552399951965,
+      "first": 0.1895651000086218,
+      "all_shown": 4.403237399994396,
+      "last_event": 4.403237399994396,
+      "bridge": 0.6981667003128678,
+      "timings": {
+        "sql": 3.1539120000088587,
+        "load": 0.011593400035053492,
+        "snapshot": 0.011603800114244223,
+        "feed": 0.899062795098871,
+        "source": 4.736262799939141,
+        "write": 3.4625486000441015,
+        "finish": 3.4851950999582186,
+        "items": 0.04473279998637736
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25563136
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "cached",
+      "total": 4.967026100028306,
+      "first": 0.789350499981083,
+      "all_shown": 1.936316700070165,
+      "last_event": 1.936316700070165,
+      "bridge": 0.7666264997096732,
+      "timings": {
+        "sql": 0.42076909996103495,
+        "load": 0.671675099991262,
+        "snapshot": 1.5554431000491604,
+        "feed": 0.4228096102597192,
+        "source": 3.2546189000131562,
+        "write": 1.5300000086426735e-05,
+        "finish": 0.028101000003516674,
+        "items": 0.046658099978230894
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25563136
+    },
+    {
+      "repeat": 1,
+      "source": "klib",
+      "phase": "changed",
+      "total": 6.202023099991493,
+      "first": 0.7378975000465289,
+      "all_shown": 2.086493100039661,
+      "last_event": 5.44227600004524,
+      "bridge": 0.9643819001503289,
+      "timings": {
+        "sql": 1.012908700038679,
+        "load": 0.6113948000129312,
+        "snapshot": 1.6409762999974191,
+        "feed": 0.4703661968233064,
+        "source": 3.5482531000161543,
+        "stat": 0.15719519997946918,
+        "write": 0.7070660999743268,
+        "finish": 0.8956052999710664,
+        "items": 0.03992770006880164
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25690112
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "first",
+      "total": 6.676024399930611,
+      "first": 0.2311655000085011,
+      "all_shown": 2.4721351999323815,
+      "last_event": 2.4721351999323815,
+      "bridge": 1.0189084996236488,
+      "timings": {
+        "sql": 3.4749805001774803,
+        "load": 0.012376900063827634,
+        "snapshot": 0.012391000054776669,
+        "feed": 1.3147933130385354,
+        "source": 2.7419667000649497,
+        "write": 3.7629419000586495,
+        "finish": 3.7853624999988824,
+        "items": 0.031351599958725274
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "cached",
+      "total": 3.4049422999378294,
+      "first": 0.694515599985607,
+      "all_shown": 2.2092655999585986,
+      "last_event": 2.2092655999585986,
+      "bridge": 1.1377663002349436,
+      "timings": {
+        "sql": 0.3143254000460729,
+        "load": 0.5439704000018537,
+        "snapshot": 1.699583400040865,
+        "feed": 0.559646078501828,
+        "source": 1.5264251999324188,
+        "write": 9.899958968162537e-06,
+        "finish": 0.017753499909304082,
+        "items": 0.026582100079394877
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 2,
+      "source": "service",
+      "phase": "changed",
+      "total": 3.5454956999747083,
+      "first": 0.68866360001266,
+      "all_shown": 1.7761189999291673,
+      "last_event": 2.9430332999909297,
+      "bridge": 0.6954961004666984,
+      "timings": {
+        "sql": 0.942834599991329,
+        "load": 0.5811486999737099,
+        "snapshot": 1.4118211000459269,
+        "feed": 0.4291462912224233,
+        "source": 1.2669682999840006,
+        "stat": 0.12176170106977224,
+        "write": 0.6018875000299886,
+        "finish": 0.7435498000122607,
+        "items": 0.02000470005441457
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "first",
+      "total": 7.580472700065002,
+      "first": 0.1946927000535652,
+      "all_shown": 3.4184127000626177,
+      "last_event": 3.4184127000626177,
+      "bridge": 0.49015780026093125,
+      "timings": {
+        "sql": 3.536824099952355,
+        "load": 0.011840199935249984,
+        "snapshot": 0.011853600037284195,
+        "feed": 0.7124151100870222,
+        "source": 3.608929399983026,
+        "write": 3.7520133999641985,
+        "finish": 3.7659736000932753,
+        "items": 0.044565899996086955
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25616384
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "cached",
+      "total": 4.065765699953772,
+      "first": 0.6743667999980971,
+      "all_shown": 1.68057540000882,
+      "last_event": 1.68057540000882,
+      "bridge": 0.7122825998812914,
+      "timings": {
+        "sql": 0.3310141999972984,
+        "load": 0.5386506000068039,
+        "snapshot": 1.3157480000518262,
+        "feed": 0.3407711161999032,
+        "source": 2.6188634999562055,
+        "write": 9.399955160915852e-06,
+        "finish": 0.016405100002884865,
+        "items": 0.025614399928599596
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25616384
+    },
+    {
+      "repeat": 2,
+      "source": "klib",
+      "phase": "changed",
+      "total": 4.98079850000795,
+      "first": 0.68030489992816,
+      "all_shown": 1.8532304000109434,
+      "last_event": 4.367478000000119,
+      "bridge": 0.8949645004468039,
+      "timings": {
+        "sql": 0.8959784999024123,
+        "load": 0.538312999997288,
+        "snapshot": 1.5452578000258654,
+        "feed": 0.3349365768954158,
+        "source": 2.6226867000805214,
+        "stat": 0.12034190050326288,
+        "write": 0.5960650999331847,
+        "finish": 0.740778399980627,
+        "items": 0.021279799984768033
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "first",
+      "total": 5.001058700028807,
+      "first": 0.23499120003543794,
+      "all_shown": 1.840953900013119,
+      "last_event": 1.840953900013119,
+      "bridge": 0.6903541996143758,
+      "timings": {
+        "sql": 2.541430199984461,
+        "load": 0.011164200026541948,
+        "snapshot": 0.011178300017490983,
+        "feed": 1.1023514962289482,
+        "source": 1.9613261999329552,
+        "write": 2.8307216999819502,
+        "finish": 2.8443150999955833,
+        "items": 0.024367499980144203
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "cached",
+      "total": 2.555587299983017,
+      "first": 0.5645699999295175,
+      "all_shown": 1.6276484000263736,
+      "last_event": 1.6276484000263736,
+      "bridge": 0.692383199930191,
+      "timings": {
+        "sql": 0.25059320009313524,
+        "load": 0.41183120000641793,
+        "snapshot": 0.908437900012359,
+        "feed": 0.5962777088861912,
+        "source": 1.4831218000035733,
+        "write": 1.009996049106121e-05,
+        "finish": 0.01636760006658733,
+        "items": 0.03816029999870807
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25620480
+    },
+    {
+      "repeat": 3,
+      "source": "service",
+      "phase": "changed",
+      "total": 4.006771399988793,
+      "first": 0.7028718999354169,
+      "all_shown": 2.0802392000332475,
+      "last_event": 3.403522099950351,
+      "bridge": 0.9912817000877112,
+      "timings": {
+        "sql": 0.8567860000766814,
+        "load": 0.5094827999128029,
+        "snapshot": 1.7279147999361157,
+        "feed": 0.4549143073381856,
+        "source": 1.4522171000717208,
+        "stat": 0.14079990121535957,
+        "write": 0.5639142000582069,
+        "finish": 0.7265416999580339,
+        "items": 0.017283099936321378
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "1160d02e0483a5fbe1cbb219163a3dfc6851f4c87b8d4f1af8ca0cead5966077",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "03a6a48ea527410c4c95b204fd934285bb40b5db4d4a318ab5afc3203daa89ee",
+      "db_bytes": 25747456
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "first",
+      "total": 7.263988799997605,
+      "first": 0.20429070002865046,
+      "all_shown": 4.2424742000875995,
+      "last_event": 4.2424742000875995,
+      "bridge": 0.6894077002070844,
+      "timings": {
+        "sql": 2.4318513000616804,
+        "load": 0.014333799947053194,
+        "snapshot": 0.014349300065077841,
+        "feed": 0.8743724870728329,
+        "source": 4.4323604999808595,
+        "write": 2.622602399904281,
+        "finish": 2.6430180000606924,
+        "items": 0.039096000022254884
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 65000,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "0c20966f656369ad458398e6418137ecffa399bb3e12ab987262712d9c2d431f",
+      "db_bytes": 25632768
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "cached",
+      "total": 4.875027400092222,
+      "first": 0.6963233000133187,
+      "all_shown": 2.057942899991758,
+      "last_event": 2.057942899991758,
+      "bridge": 0.7838039996568114,
+      "timings": {
+        "sql": 0.33925299998372793,
+        "load": 0.5835902999388054,
+        "snapshot": 1.5361797000514343,
+        "feed": 0.41994030377827585,
+        "source": 3.2477057999931276,
+        "write": 9.09995287656784e-06,
+        "finish": 0.01544139999896288,
+        "items": 0.022033799905329943
+      },
+      "calls": {
+        "sql": 2,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 0,
+        "updated": 0,
+        "removed": 0
+      },
+      "count": 65000,
+      "events_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_hash": "c819373286bfdcb2a15dfdc8fe295ee83ac7ab5007ec9181817d96d0cf92eaf2",
+      "list_hash": "79bb1c6e045a25d01b806568bac07bc005139fd325e29b7d6f72028d97170b93",
+      "db_bytes": 25632768
+    },
+    {
+      "repeat": 3,
+      "source": "klib",
+      "phase": "changed",
+      "total": 4.964381500030868,
+      "first": 0.6609850000822917,
+      "all_shown": 1.7530650000553578,
+      "last_event": 4.354269600007683,
+      "bridge": 0.6674797999439761,
+      "timings": {
+        "sql": 0.9603755999123678,
+        "load": 0.5323214000090957,
+        "snapshot": 1.3467093000654131,
+        "feed": 0.3533556900219992,
+        "source": 2.7535923999967054,
+        "stat": 0.12989329907577485,
+        "write": 0.6212811999721453,
+        "finish": 0.7762453000759706,
+        "items": 0.024115800042636693
+      },
+      "calls": {
+        "sql": 3,
+        "load": 1,
+        "snapshot": 1,
+        "feed": 65000,
+        "source": 1,
+        "stat": 195,
+        "write": 1,
+        "finish": 1,
+        "items": 1
+      },
+      "changes": {
+        "added": 195,
+        "updated": 260,
+        "removed": 195
+      },
+      "count": 65000,
+      "events_hash": "eabefea31bfb28408f44d50f5714fbed7faf1b0becf3227f2573d8c0e9969d73",
+      "db_hash": "8eb7caaef6732995373b0e8dc029fdd0fcba8cb91e2fcc39646034bfb000866c",
+      "list_hash": "57f4a4ca0e6236c4ffbb61194b02ab7f3e648160428c90b2341ac41f2b440ee2",
+      "db_bytes": 25759744
+    }
+  ]
+}
