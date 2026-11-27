@@ -2867,7 +2867,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             더 좁았으면(원본줄간격: 원본 문단별 줄간격 목록) 문단마다 원본 값으로 되돌리고, 문단 수가 다르면 원본 대표 줄간격까지
             낮춘다(사용자 결정, 2026-10-09: 결과의 쪽 구성은 원본과 같아야 한다).
             """
-            global 세트문장_최소줄간격_퍼센트, 쪽맞춤_자간기록
+            global 세트문장_최소줄간격_퍼센트, 쪽맞춤_자간기록, 쪽맞춤_장평기록, 쪽맞춤_색기록
             목표쪽 = 보고서['start'] + max(1, 목표쪽수) - 1
             범위 = 보고서['문단범위']
             시작 = time.perf_counter()
@@ -2919,7 +2919,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     return None
 
             줄간격보관 = []
-            자간보관 = []
+            자간보관, 장평보관, 색보관 = [], [], []
             여백보관 = None
             완료 = False
             try:
@@ -2979,14 +2979,15 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                                     for key in ('body_spacing', 'word_check'))
                 if 자간_허용 and 원본줄자간 and len(원본줄자간) == len(범위) and not 중단_요청됨():
                     맞춘수 = 0
-                    쪽맞춤_자간기록 = 자간보관     # 당김이 바꾸기 직전의 글자별 원래 자간이 쌓인다
+                    # 당김이 바꾸기 직전의 글자별 원래 자간·장평·글자색이 쌓인다
+                    쪽맞춤_자간기록, 쪽맞춤_장평기록, 쪽맞춤_색기록 = 자간보관, 장평보관, 색보관
                     try:
                         for 문단번호, (원줄, _) in zip(범위, 원본줄자간):
                             지금줄 = 문단_화면줄수(문단번호) if 원줄 else None
                             if 지금줄 and 지금줄 > 원줄 and 문단_줄수_원본맞춤(문단번호, 원줄):
                                 맞춘수 += 1
                     finally:
-                        쪽맞춤_자간기록 = None
+                        쪽맞춤_자간기록 = 쪽맞춤_장평기록 = 쪽맞춤_색기록 = None
                     if 맞춘수:
                         쪽, 줄수 = 끝쪽()
                         if 쪽 is not None and 쪽 <= 목표쪽:
@@ -3076,13 +3077,25 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         if 줄간격보관:
                             _쪽맞춤_줄간격_되돌리기(줄간격보관)
 
-                    def 자간원복():
-                        if 자간보관:
-                            from docfit_engine.layout_restore import restore_char_spacing
-                            restore_char_spacing(hwp, hwp_run, 자간보관, 단어모드_자간적용, 단어모드_범위선택,
-                                                 _단어모드_다음위치, _단어모드_자간필드)
+                    def 글자원복(기록, apply, fields, label):
+                        if 기록:
+                            from docfit_engine.layout_restore import restore_char_values
+                            restore_char_values(hwp, hwp_run, 기록, apply, 단어모드_범위선택,
+                                                _단어모드_다음위치, fields, label)
 
-                    restore_all((여백원복, 줄간격원복, 자간원복, lambda: 쪽맞춤_원복(조사)))
+                    def 자간원복():
+                        글자원복(자간보관, 단어모드_자간적용, _단어모드_자간필드, '글자 자간')
+
+                    def 장평원복():
+                        글자원복(장평보관, 단어모드_장평적용, _단어모드_장평필드, '글자 장평')
+
+                    def 색원복():
+                        def 색쓰기(runs, _):
+                            from docfit_engine.layout_restore import write_text_colors
+                            write_text_colors(hwp, hwp_run, runs, 단어모드_범위선택)
+                        글자원복(색보관, 색쓰기, ('TextColor',), '글자색')
+
+                    restore_all((여백원복, 줄간격원복, 자간원복, 장평원복, 색원복, lambda: 쪽맞춤_원복(조사)))
         return bind_function(보고서_1쪽_맞춤, _docfit_namespace)
     if _docfit_symbol == '문단_화면줄수':
         def 문단_화면줄수(번호):

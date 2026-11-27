@@ -32,8 +32,45 @@ def restore_all(steps):
         raise first
 
 
-def restore_char_spacing(hwp, hwp_run, records, apply, select, next_pos, fields):
-    """records(바꾼 순서대로의 [(시작, 끝, 자간 7칸)] 목록)의 글자 자간을 되돌리고 글자마다 다시 읽어 확인한다.
+def read_text_colors(hwp, hwp_run, start, end, select, next_pos, cancelled):
+    """[start, end) 글자색을 글자마다 읽어 [(시작, 끝, (색,))]로 보관한다. 중단·읽기 실패면 None."""
+    runs, pos = [], start
+    try:
+        while pos[2] < end[2]:
+            if cancelled():
+                return None
+            nxt = next_pos(pos)
+            if not nxt or not pos[2] < nxt[2] <= end[2]:
+                return None
+            select(pos, nxt)
+            pset = hwp.HParameterSet.HCharShape
+            hwp.HAction.GetDefault('CharShape', pset.HSet)
+            value = (int(pset.TextColor),)
+            if runs and runs[-1][2] == value:
+                runs[-1] = (runs[-1][0], nxt, value)
+            else:
+                runs.append((pos, nxt, value))
+            pos = nxt
+        return runs
+    except Exception:
+        return None
+    finally:
+        hwp_run('Cancel')
+
+
+def write_text_colors(hwp, hwp_run, runs, select):
+    for start, end, (color,) in runs:
+        select(start, end)
+        act = hwp.CreateAction('CharShape')
+        pset = act.CreateSet()
+        pset.SetItem('TextColor', color)
+        if act.Execute(pset) is False:
+            raise RuntimeError('글자색 적용 실패')
+    hwp_run('Cancel')
+
+
+def restore_char_values(hwp, hwp_run, records, apply, select, next_pos, fields, label):
+    """records(바꾼 순서대로의 [(시작, 끝, fields 값)] 목록)의 글자 값을 되돌리고 글자마다 다시 읽어 확인한다.
 
     같은 글자가 여러 번 담겼으면 처음 담긴 값이 원래 값이다: 쓰기는 역순, 확인은 순서대로 처음 값만 본다.
     apply(runs, 0), select(시작, 끝), next_pos(위치)는 단어 모드의 적용·선택·다음 글자 함수다.
@@ -63,7 +100,7 @@ def restore_char_spacing(hwp, hwp_run, records, apply, select, next_pos, fields)
         return same
 
     try:
-        restore_each([run for runs in records for run in runs], matches, '글자 자간')
+        restore_each([run for runs in records for run in runs], matches, label)
     finally:
         hwp_run('Cancel')
 

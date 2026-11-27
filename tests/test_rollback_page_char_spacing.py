@@ -260,6 +260,8 @@ class FailureTests(Base):
         def helper_apply(runs, delta):
             pass
         self.use([PARTIAL])
+        for key in FIELDS:      # 원복 확인이 읽는 장평(이 가짜는 장평을 바꾸지 않는다)
+            setattr(self.doc.HParameterSet.HCharShape, key.replace('Spacing', 'Ratio'), 100)
         self.assertFalse(self.run_fit(**{'장평_줄이기_사용': True, '단어모드_장평적용': helper_apply,
                                         '단어모드_서식보관': self.keep_with_ratio}))
         self.assertOriginal()

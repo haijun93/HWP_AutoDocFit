@@ -325,7 +325,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             return "#{:02X}{:02X}{:02X}".format(*rgb)
         return bind_function(색상_미리보기_hex, _docfit_namespace)
     if _docfit_symbol == '색상_적용_현재선택':
-        def 색상_적용_현재선택():
+        def 색상_적용_현재선택(칠하기=True):
             global 자간_변경_횟수
             자간_변경_횟수 += 1
             if '_줄검사_기억_편집발생' in globals():
@@ -335,7 +335,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     자간_변경문단.add(tuple(hwp.GetPos()[:2]))
             except Exception:
                 pass
-            if 색상_설정 is None or hwp is None:
+            if not 칠하기 or 색상_설정 is None or hwp is None:
                 return
             try:
                 act = hwp.HAction
