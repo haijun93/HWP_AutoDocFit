@@ -1575,7 +1575,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     로그(f'[중제목 쪽 배치] 중제목·□·첫 ㅇ 묶음을 한 쪽에 모음: {summary}')
                     return True
                 if 글쪽나눔:
-                    쪽나눔_설정(중제목['다음'], True)
+                    _쪽나눔_원복(중제목['다음'], True)
                     hwp_run('Cancel')
                     되켬 = True
                 세트문장_통계['실패'] += 1
@@ -3411,7 +3411,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 번호 not in 목표 or 항목['end'] - 항목['start'] + 1 <= 목표[번호]:
                     continue
                 쪽맞춤_해제기록 = []
-                오류 = False
+                성공 = False
                 try:
                     # 쪽 배치가 넣은 보고서 안의 쪽 나눔은 걷어내고 다시 잰다(원본에는 없던 빈 쪽을 만든다).
                     if _보고서_내부_쪽나눔_해제(항목):
@@ -3419,6 +3419,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         항목 = 쪽맞춤_보고서_목록(제목문단, 대상=번호)[0][번호]
                         if 항목['end'] - 항목['start'] + 1 <= 목표[번호]:
                             로그(f"보고서 {번호 + 1}: 보고서 안 쪽 나눔을 풀어 {목표[번호]}쪽 안에 들어감")
+                            성공 = True
                             continue
                     # 쪽 나눔으로 시작하는 붙임은 간격을 줄여도 앞 쪽으로 못 올라오므로 담을 수 없는 보고서는 바로 건너뛴다.
                     if 붙임경계 is None:
@@ -3434,15 +3435,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                    원본[번호][3] if 원본 is not None else None,
                                    여백조정=len(보고서) == 1 and 유형 != '취합보고서'):
                         쪽맞춤_보고서조정됨 = True
+                        성공 = True
                     else:
                         hwp.SetPos(*위치)
                         검수_문제_기록(현재_처리파일, f"[보고서 쪽 수 초과] 보고서 {번호 + 1}이 원래 {목표[번호]}쪽 안에 담기지 않음")
-                except BaseException:
-                    오류 = True
-                    raise
                 finally:
+                    # 담지 못했으면(실패·건너뜀·예외·중단) 풀었던 쪽 나눔을 되살리고 다시 읽어 확인한다.
                     해제기록, 쪽맞춤_해제기록 = 쪽맞춤_해제기록, None
-                    if 해제기록 and (오류 or 중단_요청됨()):
+                    if 해제기록 and (not 성공 or 중단_요청됨()):
                         from docfit_engine.layout_restore import restore_all
                         restore_all([lambda n=n: _쪽나눔_원복((0, n, 0), True) for n in 해제기록])
             return True
