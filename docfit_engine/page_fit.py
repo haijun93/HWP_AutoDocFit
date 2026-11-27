@@ -6,7 +6,7 @@ see docfit_engine.runtime. This module does not import the application bootstrap
 from docfit_engine.runtime import bind_function, bind_class
 
 def _install(*, _docfit_namespace, _docfit_symbol):
-    global 세트문장_선행들여쓰기_폭, 세트문장_후속문단인가, 세트문장_끝위치_찾기, 위치_페이지번호, 현재문단_줄간격_퍼센트, 항목기호_역할표, 보고서_문단역할, 엔진_문단역할_보조, 보고서_본문묶음_수집, 보고서_단어분리_최종검사, 보고서_페이지배치_최종검사, 보고서_묶음_쪽별줄수, 쪽_본문줄수, 쪽첫줄_시작인가, 쪽보다_긴_묶음인가, 문서_쪽나누기_전체해제, 쪽나눔_설정, _묶음_쪽나눔_이동, 보고서_압축조건, 보고서_줄간격_보관, 보고서_줄간격_적용, 보고서_페이지보호_전체해제, 쪽맞춤_논리단위, 쪽맞춤_뒤로밀기인가, 보고서_소제목묶음_수집, 문단_첫줄_쪽, 소제목묶음_뒤_표인가, 소제목묶음_쪽맞춤_대상, _묶음_위간격_축소_당김, _묶음뒤_같은쪽_줄간격_맞춤, 쪽배치_축소쪽_줄간격_통일, _묶음_같은쪽_이동, 소제목묶음_단위경계_앞쪽우선, 소제목묶음_같은쪽_시도, 본문_표_문단번호, 본문_쪽나눔_기억, 표_칸영역_범위, 표_쪽범위, 보고서_표묶음_수집, 표묶음_같은쪽_시도, 세트문장_같은쪽_시도, 로마자_중제목_표인가, 중제목_다음글문단, 쪽나눔_켜짐, 중제목_묶음_문단, 중제목_묶음_쪽, 중제목_외톨이_정리, 세트문장_같은쪽_전체_적용, 마지막쪽_화면줄수, 쪽맞춤_계측_시작, 쪽맞춤_계측_끝, 쪽맞춤_계측_더하기, 쪽맞춤_계측_복사, 쪽맞춤_계측_차이, 쪽맞춤_계측_단계문구, 쪽맞춤_계측_합계문구, 문단_위간격_pt_현재문단, 구조문단_간격_일괄조정, 구조문단_아래간격_일괄조정, 구조문단_간격_복원, 셀_세로여백_읽기, 셀_세로여백_현재선택, 표_셀_세로여백_일괄조정, _표_셀_대상_순회, 표_셀_세로여백_복원, 쪽맞춤_묶음분리_있음, 쪽맞춤_대상_조사, 쪽맞춤_레벨_적용, _보고서_페이지수_맞춤_고속, 보고서_페이지수_맞춤_시도, _보고서_페이지수_맞춤_시도_본체, _칸_문단글들, 제목표인가_현재, _한칸_제목표인가_현재, _기타_제목표인가_현재, _보고서_끝내용, 쪽맞춤_보고서_끝쪽, 쪽맞춤_보고서_목록, _쪽맞춤_줄간격_되돌리기, 보고서_1쪽_맞춤, 문단_화면줄수, 문단_자간_읽기, 문단_자간_적용, _문단_줄시작들, 문단_줄수_원본맞춤, 보고서_새쪽_시작인가, 붙임쪽_경계_목록, _붙임쪽_화면종류, 붙임쪽_마지막쪽_막힘, 붙임쪽_보고서_쪽나눔수, _대표_줄간격, 쪽맞춤_원본_보고서_기록, _보고서_내부_쪽나눔_해제, _문서유형별_쪽맞춤, _쪽맞춤_바꾼문단_단어분리_재검사, _문서유형별_쪽맞춤_본체, 보고서_페이지수_맞춤_전체_적용, 전체_찾아바꾸기, 괄호_안쪽_공백_정리_AllReplace, 괄호_안쪽_공백_정리_문단_처리, 쉼표_공백_보정_대상, 쉼표_공백_정리_문단_처리, _콜론_한글인가, 콜론_공백_보정_대상, 콜론_공백_정리_문단_처리, 쉼표_앞_공백_보정_대상, 쉼표_앞_공백_정리_문단_처리, _균등라벨_범위, 단어사이_연속공백_정리_대상, 단어사이_연속공백_정리_문단_처리, 문두_미음_기호_위치, 문두_미음_기호_정리, 항목기호_낫표_빈칸_구간, 항목기호_낫표_빈칸_정리_문단_처리, 연도_따옴표_정리_문단_처리, 곧은따옴표_통일_문단_처리, 작은따옴표_통일_문단_처리, 날짜_구분자_정리_문단_처리, 공문_띄어쓰기_정리_문단_처리, 공문_띄어쓰기_전체_적용, 문장내_공백_정규화_전체_적용, _문장내_공백_정규화_순회, 괄호_안쪽_공백_정리_전체_적용, 문장부호_뒤_공백_보정_문단_처리, 문장부호_뒤_공백_보정_전체_적용, 문단글_캐시_구간, _문단글_캐시_비우기, 현재문단_텍스트, _문단_위치표_계산, 문단_위치, _현재문단_텍스트_본체, _현재문단_텍스트_읽기, _현재문단_텍스트_읽기_상태, 실제_엔터_포함, 두_위치_사이_줄바꿈_문자인가, 문장부호_대상문장인가, 현재_화면줄_텍스트, 다음_줄_판정, 줄_목록_수집, 문장부호_줄병합_시도, _문장부호_줄병합_시도_본체, 본문_문장부호_처리, 현재_셀_주소_행번호, 현재_셀_행번호, 현재_한칸표인가, 현재_표_키, 표칸_묶음_수집, 표칸_묶음_키별, 한칸표_영역_목록, 디자인표_영역_목록, 디자인표_보호영역_갱신, _문서에_표_있음, _서식표_칸_확인, 표_헤더서식_현재셀_처리, 표_헤더서식_현재줄_처리, 표_헤더서식_표단위_처리, 서식표_영역_목록, 서식표_보호영역_조사, 표_헤더서식_전체_적용, 표_목록_수집, 셀_화면줄수, 셀_안쪽여백_읽기, 셀_안쪽여백_현재선택, 셀_안쪽여백_축소_시도
+    global _쪽나눔_원복, 쪽맞춤_원복, 세트문장_선행들여쓰기_폭, 세트문장_후속문단인가, 세트문장_끝위치_찾기, 위치_페이지번호, 현재문단_줄간격_퍼센트, 항목기호_역할표, 보고서_문단역할, 엔진_문단역할_보조, 보고서_본문묶음_수집, 보고서_단어분리_최종검사, 보고서_페이지배치_최종검사, 보고서_묶음_쪽별줄수, 쪽_본문줄수, 쪽첫줄_시작인가, 쪽보다_긴_묶음인가, 문서_쪽나누기_전체해제, 쪽나눔_설정, _묶음_쪽나눔_이동, 보고서_압축조건, 보고서_줄간격_보관, 보고서_줄간격_적용, 보고서_페이지보호_전체해제, 쪽맞춤_논리단위, 쪽맞춤_뒤로밀기인가, 보고서_소제목묶음_수집, 문단_첫줄_쪽, 소제목묶음_뒤_표인가, 소제목묶음_쪽맞춤_대상, _묶음_위간격_축소_당김, _묶음뒤_같은쪽_줄간격_맞춤, 쪽배치_축소쪽_줄간격_통일, _묶음_같은쪽_이동, 소제목묶음_단위경계_앞쪽우선, 소제목묶음_같은쪽_시도, 본문_표_문단번호, 본문_쪽나눔_기억, 표_칸영역_범위, 표_쪽범위, 보고서_표묶음_수집, 표묶음_같은쪽_시도, 세트문장_같은쪽_시도, 로마자_중제목_표인가, 중제목_다음글문단, 쪽나눔_켜짐, 중제목_묶음_문단, 중제목_묶음_쪽, 중제목_외톨이_정리, 세트문장_같은쪽_전체_적용, 마지막쪽_화면줄수, 쪽맞춤_계측_시작, 쪽맞춤_계측_끝, 쪽맞춤_계측_더하기, 쪽맞춤_계측_복사, 쪽맞춤_계측_차이, 쪽맞춤_계측_단계문구, 쪽맞춤_계측_합계문구, 문단_위간격_pt_현재문단, 구조문단_간격_일괄조정, 구조문단_아래간격_일괄조정, 구조문단_간격_복원, 셀_세로여백_읽기, 셀_세로여백_현재선택, 표_셀_세로여백_일괄조정, _표_셀_대상_순회, 표_셀_세로여백_복원, 쪽맞춤_묶음분리_있음, 쪽맞춤_대상_조사, 쪽맞춤_레벨_적용, _보고서_페이지수_맞춤_고속, 보고서_페이지수_맞춤_시도, _보고서_페이지수_맞춤_시도_본체, _칸_문단글들, 제목표인가_현재, _한칸_제목표인가_현재, _기타_제목표인가_현재, _보고서_끝내용, 쪽맞춤_보고서_끝쪽, 쪽맞춤_보고서_목록, _쪽맞춤_줄간격_되돌리기, 보고서_1쪽_맞춤, 문단_화면줄수, 문단_자간_읽기, 문단_자간_적용, _문단_줄시작들, 문단_줄수_원본맞춤, 보고서_새쪽_시작인가, 붙임쪽_경계_목록, _붙임쪽_화면종류, 붙임쪽_마지막쪽_막힘, 붙임쪽_보고서_쪽나눔수, _대표_줄간격, 쪽맞춤_원본_보고서_기록, _보고서_내부_쪽나눔_해제, _문서유형별_쪽맞춤, _쪽맞춤_바꾼문단_단어분리_재검사, _문서유형별_쪽맞춤_본체, 보고서_페이지수_맞춤_전체_적용, 전체_찾아바꾸기, 괄호_안쪽_공백_정리_AllReplace, 괄호_안쪽_공백_정리_문단_처리, 쉼표_공백_보정_대상, 쉼표_공백_정리_문단_처리, _콜론_한글인가, 콜론_공백_보정_대상, 콜론_공백_정리_문단_처리, 쉼표_앞_공백_보정_대상, 쉼표_앞_공백_정리_문단_처리, _균등라벨_범위, 단어사이_연속공백_정리_대상, 단어사이_연속공백_정리_문단_처리, 문두_미음_기호_위치, 문두_미음_기호_정리, 항목기호_낫표_빈칸_구간, 항목기호_낫표_빈칸_정리_문단_처리, 연도_따옴표_정리_문단_처리, 곧은따옴표_통일_문단_처리, 작은따옴표_통일_문단_처리, 날짜_구분자_정리_문단_처리, 공문_띄어쓰기_정리_문단_처리, 공문_띄어쓰기_전체_적용, 문장내_공백_정규화_전체_적용, _문장내_공백_정규화_순회, 괄호_안쪽_공백_정리_전체_적용, 문장부호_뒤_공백_보정_문단_처리, 문장부호_뒤_공백_보정_전체_적용, 문단글_캐시_구간, _문단글_캐시_비우기, 현재문단_텍스트, _문단_위치표_계산, 문단_위치, _현재문단_텍스트_본체, _현재문단_텍스트_읽기, _현재문단_텍스트_읽기_상태, 실제_엔터_포함, 두_위치_사이_줄바꿈_문자인가, 문장부호_대상문장인가, 현재_화면줄_텍스트, 다음_줄_판정, 줄_목록_수집, 문장부호_줄병합_시도, _문장부호_줄병합_시도_본체, 본문_문장부호_처리, 현재_셀_주소_행번호, 현재_셀_행번호, 현재_한칸표인가, 현재_표_키, 표칸_묶음_수집, 표칸_묶음_키별, 한칸표_영역_목록, 디자인표_영역_목록, 디자인표_보호영역_갱신, _문서에_표_있음, _서식표_칸_확인, 표_헤더서식_현재셀_처리, 표_헤더서식_현재줄_처리, 표_헤더서식_표단위_처리, 서식표_영역_목록, 서식표_보호영역_조사, 표_헤더서식_전체_적용, 표_목록_수집, 셀_화면줄수, 셀_안쪽여백_읽기, 셀_안쪽여백_현재선택, 셀_안쪽여백_축소_시도
     if _docfit_symbol == '세트문장_선행들여쓰기_폭':
         def 세트문장_선행들여쓰기_폭(text):
             """문단 앞 공백의 상대 폭을 계산한다. 탭은 공백 4칸으로 본다."""
@@ -511,6 +511,25 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             if act.Execute(pset) is False:
                 raise RuntimeError('문단 앞 쪽 나눔 설정 실패')
         return bind_function(쪽나눔_설정, _docfit_namespace)
+    if _docfit_symbol == '_쪽나눔_원복':
+        def _쪽나눔_원복(위치, 켜기, 확인=True):
+            """'문단 앞에서 쪽 나눔'을 원래 값으로 돌린다. 쓰기나 확인에 실패하면 필수 수정 실패.
+
+            확인=False는 바꾸기 전 값을 읽지 못한 경우다(설정 명령의 실패만 본다).
+            """
+            from docfit_engine.layout_restore import read_page_break, restore_each
+
+            def 복원(pos):
+                try:
+                    쪽나눔_설정(pos, 켜기)
+                except Exception as e:
+                    if not 확인:
+                        raise
+                    로그(f"쪽 나눔 원복 중 오류(다시 읽어 확인): {e}")
+                return not 확인 or read_page_break(hwp, pos) == int(켜기)
+
+            restore_each((위치,), 복원, '문단 앞 쪽 나눔')
+        return bind_function(_쪽나눔_원복, _docfit_namespace)
     if _docfit_symbol == '_묶음_쪽나눔_이동':
         def _묶음_쪽나눔_이동(시작위치, 문단들, counts, summary, 표키=None, 표까지만=False):
             """줄간격으로 옮기지 못한 묶음을 '문단 앞에서 쪽 나눔'으로 다음 쪽에 보낸다.
@@ -526,7 +545,11 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             capacity = 쪽_본문줄수(시작위치)
             if not capacity or counts[pages[0]] > capacity * 쪽나눔_최대_앞쪽비율:
                 return False
+            from docfit_engine.layout_restore import read_page_break
             original = hwp.GetPos()
+            원래_나눔 = read_page_break(hwp, 시작위치)
+            hwp.SetPos(*original)
+            유지 = False
             try:
                 쪽나눔_설정(시작위치, True)
                 new_counts = 보고서_묶음_쪽별줄수(문단들)
@@ -536,16 +559,20 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     쪽 = next(iter(new_counts))
                     같은쪽 = bool(표쪽) and 표쪽[0] == 쪽 and (표까지만 or 표쪽[1] == 쪽)
                 if 같은쪽:
+                    유지 = True
                     if 시작위치[0] == 0:
                         쪽배치_쪽나눔문단.add(시작위치[1])
                     로그(f'문장 묶음 쪽 나눔으로 다음 쪽 배치: {summary} '
                          f'(앞쪽 {counts[pages[0]]}줄/쪽당 약 {capacity}줄)')
                     return True
-                쪽나눔_설정(시작위치, False)
                 return False
             finally:
-                hwp_run('Cancel')
-                hwp.SetPos(*original)
+                try:
+                    if not 유지:
+                        _쪽나눔_원복(시작위치, bool(원래_나눔), 확인=원래_나눔 is not None)
+                finally:
+                    hwp_run('Cancel')
+                    hwp.SetPos(*original)
         return bind_function(_묶음_쪽나눔_이동, _docfit_namespace)
     if _docfit_symbol == '보고서_압축조건':
         def 보고서_압축조건(counts):
@@ -776,23 +803,43 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     문단_위간격_적용_현재선택(round(값 * 비율, 1))
                     hwp_run('Cancel')
 
-            단계수 = int(round(쪽맞춤_위간격_최대축소비율 * 10))
-            for step in range(1, 단계수 + 1):
-                if 중단_요청됨():
-                    적용(1.0)
-                    return None
-                적용(1 - 0.1 * step)
-                세트문장_통계['축소횟수'] = 세트문장_통계.get('축소횟수', 0) + 1
-                new_counts = 보고서_묶음_쪽별줄수(paragraphs)
-                if new_counts is None:
-                    적용(1.0)
-                    return None
-                if set(new_counts) == {target_page} and (표키 is None or 표_쪽범위(표키) == (target_page, target_page)):
-                    로그(f'문장 묶음 {target_page}쪽 배치 완료: {summary} (줄간격 최소라 문단 위 간격 {step * 10}% 축소)')
-                    return True
-            적용(1.0)
-            진단로그(f'[문장 묶음] 문단 위 간격 {단계수 * 10}% 축소로도 당기지 못함 / {summary}')
-            return False
+            def 원복():
+                from docfit_engine.layout_restore import restore_each, confirm_margin
+
+                def 한문단(item):
+                    pos, 값 = item
+                    try:
+                        hwp.SetPos(*pos)
+                        hwp_run('MoveParaBegin')
+                        hwp_run('MoveSelParaEnd')
+                        문단_위간격_적용_현재선택(값)
+                        hwp_run('Cancel')
+                    except Exception as e:
+                        로그(f"문단 위 간격 원복 중 오류(다시 읽어 확인): {e}")
+                    return confirm_margin(hwp, hwp_run, pos, 'PrevSpacing', 값, 문단_위간격_pt_현재문단)
+
+                restore_each(원래, 한문단, '문단 위 간격')
+
+            유지 = False
+            try:
+                단계수 = int(round(쪽맞춤_위간격_최대축소비율 * 10))
+                for step in range(1, 단계수 + 1):
+                    if 중단_요청됨():
+                        return None
+                    적용(1 - 0.1 * step)
+                    세트문장_통계['축소횟수'] = 세트문장_통계.get('축소횟수', 0) + 1
+                    new_counts = 보고서_묶음_쪽별줄수(paragraphs)
+                    if new_counts is None:
+                        return None
+                    if set(new_counts) == {target_page} and (표키 is None or 표_쪽범위(표키) == (target_page, target_page)):
+                        로그(f'문장 묶음 {target_page}쪽 배치 완료: {summary} (줄간격 최소라 문단 위 간격 {step * 10}% 축소)')
+                        유지 = True
+                        return True
+                진단로그(f'[문장 묶음] 문단 위 간격 {단계수 * 10}% 축소로도 당기지 못함 / {summary}')
+                return False
+            finally:
+                if not 유지:
+                    원복()
         return bind_function(_묶음_위간격_축소_당김, _docfit_namespace)
     if _docfit_symbol == '쪽배치_축소쪽_줄간격_통일':
         def 쪽배치_축소쪽_줄간격_통일():
@@ -930,9 +977,17 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 return len(backup)
             finally:
                 try:
-                    if not committed:
-                        for pos, kind, value in backup:
-                            적용(pos, kind, value)
+                    if not committed and backup:
+                        from docfit_engine.layout_restore import restore_each, line_spacing_matches
+
+                        def 원복(item):
+                            try:
+                                적용(*item)
+                            except Exception as e:
+                                로그(f"줄간격 원복 중 오류(다시 읽어 확인): {e}")
+                            return line_spacing_matches(hwp, *item)
+
+                        restore_each(backup, 원복, '묶음 뒤 문단 줄간격')
                 finally:
                     hwp.SetPos(*original)
         return bind_function(_묶음뒤_같은쪽_줄간격_맞춤, _docfit_namespace)
@@ -976,7 +1031,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     for step in range(1, 세트문장_페이지줄간격_최대시도 + 1):
                         if 중단_요청됨():
                             return None
-                        if not 보고서_줄간격_적용(backup, step, 확대=expand):
+                        try:
+                            changed = 보고서_줄간격_적용(backup, step, 확대=expand)
+                        except BaseException:
+                            attempted = True      # 일부 문단만 바뀐 뒤의 예외도 되돌린다
+                            raise
+                        if not changed:
                             # 이미 최소/최대 줄간격이라 더 바꿀 수 없다.
                             break
                         attempted = True
@@ -1005,10 +1065,19 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     # 페이지 보호 속성은 최종 문서에 남기지 않는다. 줄간격 범위 안에서
                     # 해결되지 않으면 원래 값을 복원한다.
                     if attempted:
-                        보고서_줄간격_적용(backup, 0, 확대=expand)
+                        줄간격_원복(expand)
                         attempted = False
                     진단로그(f'[문장 묶음] {direction} 방향 줄간격 범위 내 이동 불가 / {summary}')
                     return False
+
+                def 줄간격_원복(확대):
+                    from docfit_engine.layout_restore import confirm_line_spacing
+                    try:
+                        # 단계 0은 혼합 줄간격을 문단마다 원래 값으로 돌린다.
+                        보고서_줄간격_적용(backup, 0, 확대=확대)
+                    except Exception as e:
+                        로그(f"줄간격 원복 중 오류(남은 문단을 하나씩 확인): {e}")
+                    confirm_line_spacing(hwp, backup)
 
                 for expand in ((먼저_확대,) if 한방향 else (먼저_확대, not 먼저_확대)):
                     result = 방향_시도(expand)
@@ -1020,8 +1089,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             finally:
                 try:
                     if attempted and not success:
-                        # 단계 0은 혼합 줄간격을 문단마다 원래 값으로 돌린다.
-                        보고서_줄간격_적용(backup, 0, 확대=expand)
+                        줄간격_원복(expand)
                 finally:
                     hwp_run('Cancel')
                     hwp.SetPos(*시작위치)
@@ -1479,6 +1547,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             # 뒤 □가 이미 '문단 앞 쪽 나눔'으로 다음 쪽에 갔으면 그 쪽 나눔부터 푼다
             # (둘 다 켜면 □가 한 쪽 더 밀린다. 실측: 서식 예시 'Ⅱ 추진 계획').
             글쪽나눔 = 쪽나눔_켜짐(중제목['다음'])
+            되켬 = False
             성공 = False
             try:
                 if 글쪽나눔:
@@ -1508,11 +1577,18 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 글쪽나눔:
                     쪽나눔_설정(중제목['다음'], True)
                     hwp_run('Cancel')
+                    되켬 = True
                 세트문장_통계['실패'] += 1
                 검수_문제_기록(현재_처리파일, f'[중제목 묶음 쪽 분리] {summary}')
                 return False
             finally:
-                hwp.SetPos(*original)
+                try:
+                    # 옮기지 못한 채 중단·측정 실패·예외로 나가면 풀었던 쪽 나눔을 다시 켠다.
+                    if 글쪽나눔 and not 성공 and not 되켬:
+                        _쪽나눔_원복(중제목['다음'], True)
+                        hwp_run('Cancel')
+                finally:
+                    hwp.SetPos(*original)
         return bind_function(중제목_외톨이_정리, _docfit_namespace)
     if _docfit_symbol == '세트문장_같은쪽_전체_적용':
         def 세트문장_같은쪽_전체_적용():
@@ -1790,29 +1866,40 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(구조문단_아래간격_일괄조정, _docfit_namespace)
     if _docfit_symbol == '구조문단_간격_복원':
         def 구조문단_간격_복원(원래값, 위간격=False):
-            """구조문단_간격_일괄조정이 기록한 원래 간격으로 되돌린다."""
+            """구조문단_간격_일괄조정이 기록한 원래 간격으로 되돌리고 다시 읽어 확인한다.
+
+            확인하지 못한 문단이 있으면 나머지를 모두 되돌린 뒤 필수 수정 실패로 올린다.
+            """
             if hwp is None or not 원래값:
                 return 0
+            from docfit_engine.layout_restore import restore_each, confirm_margin
+            읽기 = 문단_위간격_pt_현재문단 if 위간격 else 문단_아래간격_pt_현재문단
+            항목 = 'PrevSpacing' if 위간격 else 'NextSpacing'
             쓰기 = 문단_위간격_적용_현재선택 if 위간격 else 문단_아래간격_적용_현재선택
             원위치 = hwp.GetPos()
-            복원수 = 0
+
+            def 복원(item):
+                (list_id, para_id), 값 = item
+                hwp.SetPos(list_id, para_id, 0)
+                if tuple(hwp.GetPos()[:2]) != (list_id, para_id):
+                    return False
+                try:
+                    hwp_run('MoveParaBegin')
+                    hwp_run('MoveSelParaEnd')
+                    쓰기(값)
+                    hwp_run('Cancel')
+                except Exception as e:
+                    로그(f"문단 간격 복원 중 오류(다시 읽어 확인): {e}")
+                return confirm_margin(hwp, hwp_run, (list_id, para_id, 0), 항목, 값, 읽기)
+
             try:
-                for (list_id, para_id), 값 in 원래값.items():
-                    try:
-                        hwp.SetPos(list_id, para_id, 0)
-                        hwp_run('MoveParaBegin')
-                        hwp_run('MoveSelParaEnd')
-                        쓰기(값)
-                        hwp_run('Cancel')
-                        복원수 += 1
-                    except Exception as e:
-                        로그(f"문단 간격 복원 실패(무시): {e}")
+                restore_each(원래값.items(), 복원, '문단 위 간격' if 위간격 else '문단 아래 간격')
             finally:
                 try:
                     hwp.SetPos(*원위치)
                 except Exception:
                     pass
-            return 복원수
+            return len(원래값)
         return bind_function(구조문단_간격_복원, _docfit_namespace)
     if _docfit_symbol == '셀_세로여백_읽기':
         def 셀_세로여백_읽기():
@@ -1995,30 +2082,33 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(_표_셀_대상_순회, _docfit_namespace)
     if _docfit_symbol == '표_셀_세로여백_복원':
         def 표_셀_세로여백_복원(원래값):
-            """표_셀_세로여백_일괄조정이 기록한 원래 여백으로 되돌린다."""
+            """표_셀_세로여백_일괄조정이 기록한 원래 여백으로 되돌리고 확인한다(실패하면 필수 수정 실패)."""
             if hwp is None or not 원래값:
                 return 0
+            from docfit_engine.layout_restore import restore_each
             원위치 = None
             try:
                 원위치 = hwp.GetPos()
             except Exception:
                 pass
-            복원수 = 0
+
+            def 복원(item):
+                area, 값 = item
+                hwp.SetPos(area, 0, 0)
+                if not 셀_세로여백_현재선택(원래값=값):
+                    return False
+                hwp.SetPos(area, 0, 0)
+                return 셀_세로여백_읽기() == tuple(값)
+
             try:
-                for area, 값 in 원래값.items():
-                    try:
-                        hwp.SetPos(area, 0, 0)
-                        if 셀_세로여백_현재선택(원래값=값):
-                            복원수 += 1
-                    except Exception as e:
-                        로그(f"셀 세로 여백 복원 실패(무시): {e}")
+                restore_each(원래값.items(), 복원, '표 셀 세로 여백')
             finally:
                 if 원위치 is not None:
                     try:
                         hwp.SetPos(*원위치)
                     except Exception:
                         pass
-            return 복원수
+            return len(원래값)
         return bind_function(표_셀_세로여백_복원, _docfit_namespace)
     if _docfit_symbol == '쪽맞춤_묶음분리_있음':
         def 쪽맞춤_묶음분리_있음(최소쪽=None, 최대쪽=None):
@@ -2154,11 +2244,13 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         새값 = 원값 if 줄임 <= 0 else max(0.0, round(원값 - 줄임, 1))
                         if 위간격_0 and 칸 == 1:
                             새값 = 0.0
-                        if abs(새값 - 현재[칸]) < 0.05:
+                        if 현재[칸] is not None and abs(새값 - 현재[칸]) < 0.05:
                             continue
                         hwp.SetPos(위치[0], 위치[1], 0)
                         hwp_run('MoveParaBegin')
                         hwp_run('MoveSelParaEnd')
+                        현재[칸] = None      # 쓰는 중 예외가 나면 원복 때 반드시 다시 쓴다
+                        조사.setdefault('쓴문단', set()).add((위치, 칸))
                         쓰기(새값)
                         hwp_run('Cancel')
                         현재[칸] = 새값
@@ -2174,9 +2266,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         목표 = (1, max(최소_hwpunit, int(round(원래[1] * (1.0 - 비율)))),
                                max(최소_hwpunit, int(round(원래[2] * (1.0 - 비율)))))
                     현재 = 조사['셀현재'][area]
-                    if 목표 == 현재 or (비율 > 0 and abs(목표[1] - 현재[1]) < 5 and abs(목표[2] - 현재[2]) < 5):
+                    if 현재 is not None and (목표 == 현재 or (
+                            비율 > 0 and abs(목표[1] - 현재[1]) < 5 and abs(목표[2] - 현재[2]) < 5)):
                         continue
                     hwp.SetPos(area, 0, 0)
+                    조사['셀현재'][area] = None
+                    조사.setdefault('쓴셀', set()).add(area)
                     성공 = (셀_세로여백_현재선택(원래값=원래) if 비율 <= 0
                           else 셀_세로여백_현재선택(top_hwpunit=목표[1], bottom_hwpunit=목표[2]))
                     if 성공:
@@ -2190,6 +2285,52 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     pass
             return 바꾼문단, 바꾼셀
         return bind_function(쪽맞춤_레벨_적용, _docfit_namespace)
+    if _docfit_symbol == '쪽맞춤_원복':
+        def 쪽맞춤_원복(조사):
+            """레벨 0으로 되돌린 뒤 한 번이라도 쓴 문단·셀을 다시 읽고, 다른 곳은 다시 써서 확인한다."""
+            from docfit_engine.layout_restore import restore_all
+            원위치 = hwp.GetPos()
+
+            def 문단확인(칸, 위간격):
+                읽기 = 문단_위간격_pt_현재문단 if 위간격 else 문단_아래간격_pt_현재문단
+                다름 = {}
+                for 위치, k in sorted(조사.get('쓴문단', ())):
+                    if k != 칸:
+                        continue
+                    값 = 조사['문단'][위치][칸]
+                    try:
+                        hwp.SetPos(위치[0], 위치[1], 0)
+                        현재값 = 읽기() if tuple(hwp.GetPos()[:2]) == tuple(위치) else None
+                    except Exception:
+                        현재값 = None
+                    if 현재값 is None or abs(현재값 - 값) >= 0.001:
+                        다름[위치] = 값
+                구조문단_간격_복원(다름, 위간격=위간격)
+
+            def 셀확인():
+                다름 = {}
+                for area in sorted(조사.get('쓴셀', ())):
+                    try:
+                        hwp.SetPos(area, 0, 0)
+                        현재값 = 셀_세로여백_읽기()
+                    except Exception:
+                        현재값 = None
+                    if 현재값 != tuple(조사['셀'][area]):
+                        다름[area] = 조사['셀'][area]
+                표_셀_세로여백_복원(다름)
+
+            try:
+                try:
+                    쪽맞춤_레벨_적용(조사, 0)
+                except Exception as e:
+                    로그(f"쪽 수 맞춤 원복 중 오류(남은 곳을 하나씩 확인): {e}")
+                restore_all((lambda: 문단확인(0, False), lambda: 문단확인(1, True), 셀확인))
+            finally:
+                try:
+                    hwp.SetPos(*원위치)
+                except Exception:
+                    pass
+        return bind_function(쪽맞춤_원복, _docfit_namespace)
     if _docfit_symbol == '_보고서_페이지수_맞춤_고속':
         def _보고서_페이지수_맞춤_고속(목표_페이지수):
             """대상 조사 1회 + 레벨 이분 탐색으로 쪽 수를 맞춘다. 결과는 기존 방식과 같은 뜻의 True/False.
@@ -2246,6 +2387,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 레벨 = 결과['level']
                 쪽맞춤_레벨_적용(조사, 레벨)
                 마지막쪽, _ = 마지막쪽_화면줄수()
+                if 중단_요청됨():     # 취소 중의 '걸린 묶음 없음'은 성공 근거가 아니다
+                    return False
                 if 마지막쪽 is None or 마지막쪽 > 목표_페이지수:
                     로그(f"페이지 수 맞춤(고속): 레벨 {레벨}을 다시 재니 {마지막쪽}쪽 — 쪽 수가 레벨 순서대로 줄지 않아 "
                          "기존 방식으로 다시 시도")
@@ -2265,13 +2408,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if not 완료:
                     구간시작 = time.perf_counter()
                     try:
-                        쪽맞춤_레벨_적용(조사, 0)
+                        쪽맞춤_원복(조사)
                     finally:
                         쪽맞춤_계측_더하기('원복', time.perf_counter() - 구간시작)
         return bind_function(_보고서_페이지수_맞춤_고속, _docfit_namespace)
     if _docfit_symbol == '보고서_페이지수_맞춤_시도':
         def 보고서_페이지수_맞춤_시도(목표_페이지수):
             """페이지 수 맞춤 본체를 부르며 구간별 소요 시간을 작업 로그에 남긴다(동작은 같다)."""
+            from docfit_engine.edit_failures import RequiredEditError
             쪽맞춤_계측_시작()
             시작 = time.perf_counter()
             결과 = False
@@ -2279,6 +2423,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 페이지맞춤_고속_사용 and hwp is not None and 목표_페이지수 and 목표_페이지수 > 0:
                     try:
                         결과 = _보고서_페이지수_맞춤_고속(목표_페이지수)
+                    except RequiredEditError:
+                        raise      # 원복을 확인하지 못한 문서의 값을 원본으로 삼아 다시 시도하지 않는다
                     except Exception as e:
                         로그(f"페이지 수 맞춤(고속) 오류: {e} — 기존 방식으로 다시 시도")
                         결과 = None
@@ -2325,89 +2471,114 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             첫_도달 = None         # 처음 목표 쪽 수에 닿았을 때의 적용기록 길이
             추가단계 = 0
 
+            바뀜 = True            # 성공을 확정하거나 원복을 마치기 전에는 finally에서 되돌린다
+
             def 원래대로():
+                nonlocal 바뀜
+                from docfit_engine.layout_restore import restore_all
                 시작 = time.perf_counter()
+                복원수 = []
                 try:
-                    return (구조문단_간격_복원(원래값[True], 위간격=True)
-                            + 구조문단_간격_복원(원래값[False])
-                            + 표_셀_세로여백_복원(표셀_원래값))
+                    restore_all((
+                        lambda: 복원수.append(구조문단_간격_복원(원래값[True], 위간격=True)),
+                        lambda: 복원수.append(구조문단_간격_복원(원래값[False])),
+                        lambda: 복원수.append(표_셀_세로여백_복원(표셀_원래값))))
+                    바뀜 = False
+                    return sum(복원수)
                 finally:
                     쪽맞춤_계측_더하기('원복', time.perf_counter() - 시작)
 
-            for 위간격 in (False, True):
-                이름 = "문단 위 간격" if 위간격 else "문단 아래 간격"
-                for 회 in range(1, 최대반복 + 1):
-                    if 중단_요청됨():
-                        return False
-                    단계시작 = time.perf_counter()
-                    계측_이전 = 쪽맞춤_계측_복사()
-                    구간시작 = time.perf_counter()
-                    조정수 = 구조문단_간격_일괄조정(
-                        -페이지맞춤_스텝_pt, 최소쪽=최소쪽, 위간격=위간격, 원래값=원래값[위간격])
-                    쪽맞춤_계측_더하기('문단합계', time.perf_counter() - 구간시작)
-                    표조정수 = 0
-                    if 페이지맞춤_표셀세로여백_사용:
-                        스텝 = len(적용기록) + 1
+            def 탐색():
+                nonlocal 첫_도달, 추가단계, 바뀜
+                global 쪽맞춤_묶음_확인됨, 쪽맞춤_묶음이동_결정
+                for 위간격 in (False, True):
+                    이름 = "문단 위 간격" if 위간격 else "문단 아래 간격"
+                    for 회 in range(1, 최대반복 + 1):
+                        if 중단_요청됨():
+                            return False
+                        단계시작 = time.perf_counter()
+                        계측_이전 = 쪽맞춤_계측_복사()
                         구간시작 = time.perf_counter()
-                        표조정수 = 표_셀_세로여백_일괄조정(
-                            스텝, 최소쪽=최소쪽, 원래값=표셀_원래값)
-                        쪽맞춤_계측_더하기('표합계', time.perf_counter() - 구간시작)
-                    if 조정수 == 0 and 표조정수 == 0:
-                        로그(f"페이지 수 맞춤: 더 줄일 {이름} 및 표 셀 여백이 없음")
-                        break
-                    적용기록.append(위간격)
-                    구간시작 = time.perf_counter()
-                    마지막쪽, _ = 마지막쪽_화면줄수()
-                    쪽맞춤_계측_더하기('쪽측정', time.perf_counter() - 구간시작, 1)
-                    로그(쪽맞춤_계측_단계문구(이름, 회, 쪽맞춤_계측_차이(계측_이전),
-                                          time.perf_counter() - 단계시작, 마지막쪽))
-                    if 마지막쪽 is None:
-                        로그("페이지 수 맞춤 중단: 쪽 번호 확인 실패")
-                        break
-                    if 마지막쪽 > 목표_페이지수:
-                        continue
-                    구간시작 = time.perf_counter()
-                    묶음걸림 = 쪽맞춤_묶음분리_있음(최소쪽=최소쪽)
-                    쪽맞춤_계측_더하기('묶음검사', time.perf_counter() - 구간시작, 1)
-                    if not 묶음걸림:
-                        쪽맞춤_묶음_확인됨 = True
-                        로그(f"페이지 수 맞춤 완료: {이름} {회}단계({회 * 페이지맞춤_스텝_pt:g}pt, 표 셀 여백 연동) 축소로 "
-                             f"{목표_페이지수}쪽 달성, 쪽 경계에 걸린 묶음 없음")
-                        return True
-                    if 첫_도달 is None:
-                        첫_도달 = len(적용기록)
-                        로그(f"페이지 수 맞춤: {목표_페이지수}쪽에 닿았지만 쪽 경계에 걸린 묶음이 있어 "
-                             f"최대 {페이지맞춤_묶음확인_추가단계}단계 더 줄여 봄")
+                        조정수 = 구조문단_간격_일괄조정(
+                            -페이지맞춤_스텝_pt, 최소쪽=최소쪽, 위간격=위간격, 원래값=원래값[위간격])
+                        쪽맞춤_계측_더하기('문단합계', time.perf_counter() - 구간시작)
+                        표조정수 = 0
+                        if 페이지맞춤_표셀세로여백_사용:
+                            스텝 = len(적용기록) + 1
+                            구간시작 = time.perf_counter()
+                            표조정수 = 표_셀_세로여백_일괄조정(
+                                스텝, 최소쪽=최소쪽, 원래값=표셀_원래값)
+                            쪽맞춤_계측_더하기('표합계', time.perf_counter() - 구간시작)
+                        if 조정수 == 0 and 표조정수 == 0:
+                            로그(f"페이지 수 맞춤: 더 줄일 {이름} 및 표 셀 여백이 없음")
+                            break
+                        적용기록.append(위간격)
+                        구간시작 = time.perf_counter()
+                        마지막쪽, _ = 마지막쪽_화면줄수()
+                        쪽맞춤_계측_더하기('쪽측정', time.perf_counter() - 구간시작, 1)
+                        로그(쪽맞춤_계측_단계문구(이름, 회, 쪽맞춤_계측_차이(계측_이전),
+                                              time.perf_counter() - 단계시작, 마지막쪽))
+                        if 마지막쪽 is None:
+                            로그("페이지 수 맞춤 중단: 쪽 번호 확인 실패")
+                            break
+                        if 마지막쪽 > 목표_페이지수:
+                            continue
+                        구간시작 = time.perf_counter()
+                        묶음걸림 = 쪽맞춤_묶음분리_있음(최소쪽=최소쪽)
+                        쪽맞춤_계측_더하기('묶음검사', time.perf_counter() - 구간시작, 1)
+                        if 중단_요청됨():     # 취소 중의 '걸린 묶음 없음'은 성공 근거가 아니다
+                            return False
+                        if not 묶음걸림:
+                            쪽맞춤_묶음_확인됨 = True
+                            바뀜 = False
+                            로그(f"페이지 수 맞춤 완료: {이름} {회}단계({회 * 페이지맞춤_스텝_pt:g}pt, 표 셀 여백 연동) 축소로 "
+                                 f"{목표_페이지수}쪽 달성, 쪽 경계에 걸린 묶음 없음")
+                            return True
+                        if 첫_도달 is None:
+                            첫_도달 = len(적용기록)
+                            로그(f"페이지 수 맞춤: {목표_페이지수}쪽에 닿았지만 쪽 경계에 걸린 묶음이 있어 "
+                                 f"최대 {페이지맞춤_묶음확인_추가단계}단계 더 줄여 봄")
+                        else:
+                            추가단계 += 1
+                        if 추가단계 >= 페이지맞춤_묶음확인_추가단계:
+                            break
                     else:
-                        추가단계 += 1
-                    if 추가단계 >= 페이지맞춤_묶음확인_추가단계:
+                        continue
+                    if 첫_도달 is not None and 추가단계 >= 페이지맞춤_묶음확인_추가단계:
                         break
-                else:
-                    continue
-                if 첫_도달 is not None and 추가단계 >= 페이지맞춤_묶음확인_추가단계:
-                    break
 
-            if 첫_도달 is None:
-                복원수 = 원래대로()
-                로그(
-                    f"페이지 수 맞춤 실패: 문단 아래·위 간격 및 표 셀 여백을 최대 {페이지맞춤_최대_pt:g}pt까지 줄여도 "
-                    f"목표({목표_페이지수}쪽) 미달 — 바꾼 간격·여백 {복원수}곳을 원래 값으로 되돌림"
-                )
-                return False
+                if 첫_도달 is None:
+                    복원수 = 원래대로()
+                    로그(
+                        f"페이지 수 맞춤 실패: 문단 아래·위 간격 및 표 셀 여백을 최대 {페이지맞춤_최대_pt:g}pt까지 줄여도 "
+                        f"목표({목표_페이지수}쪽) 미달 — 바꾼 간격·여백 {복원수}곳을 원래 값으로 되돌림"
+                    )
+                    return False
 
-            # 묶음 규칙까지 지키는 단계는 없었다. 처음 목표에 닿았던 단계로 되돌려 두면
-            # 쪽 배치가 걸린 묶음 전체를 다음 쪽으로 옮긴다.
-            원래대로()
-            재적용시작 = time.perf_counter()
-            for 위간격 in 적용기록[:첫_도달]:
-                구조문단_간격_일괄조정(-페이지맞춤_스텝_pt, 최소쪽=최소쪽, 위간격=위간격)
-            if 페이지맞춤_표셀세로여백_사용 and 첫_도달 > 0:
-                표_셀_세로여백_일괄조정(첫_도달, 최소쪽=최소쪽, 원래값=표셀_원래값)
-            쪽맞춤_계측_더하기('원복', time.perf_counter() - 재적용시작)
-            쪽맞춤_묶음이동_결정 = True
-            로그(f"페이지 수 맞춤: 묶음 규칙을 함께 지키는 단계가 없어 처음 {목표_페이지수}쪽에 닿은 "
-                 f"단계({첫_도달}단계)로 두고, 걸린 묶음은 쪽 배치에서 다음 쪽으로 옮김")
-            return True
+                # 묶음 규칙까지 지키는 단계는 없었다. 처음 목표에 닿았던 단계로 되돌려 두면
+                # 쪽 배치가 걸린 묶음 전체를 다음 쪽으로 옮긴다.
+                원래대로()
+                바뀜 = True
+                재적용시작 = time.perf_counter()
+                for 위간격 in 적용기록[:첫_도달]:
+                    구조문단_간격_일괄조정(-페이지맞춤_스텝_pt, 최소쪽=최소쪽, 위간격=위간격,
+                                          원래값=원래값[위간격])
+                if 페이지맞춤_표셀세로여백_사용 and 첫_도달 > 0:
+                    표_셀_세로여백_일괄조정(첫_도달, 최소쪽=최소쪽, 원래값=표셀_원래값)
+                쪽맞춤_계측_더하기('원복', time.perf_counter() - 재적용시작)
+                if 중단_요청됨():
+                    return False
+                바뀜 = False
+                쪽맞춤_묶음이동_결정 = True
+                로그(f"페이지 수 맞춤: 묶음 규칙을 함께 지키는 단계가 없어 처음 {목표_페이지수}쪽에 닿은 "
+                     f"단계({첫_도달}단계)로 두고, 걸린 묶음은 쪽 배치에서 다음 쪽으로 옮김")
+                return True
+
+            try:
+                return 탐색()
+            finally:
+                if 바뀜:
+                    원래대로()
         return bind_function(_보고서_페이지수_맞춤_시도_본체, _docfit_namespace)
     if _docfit_symbol == '_칸_문단글들':
         def _칸_문단글들(area, 최대=6):
@@ -2605,13 +2776,16 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(쪽맞춤_보고서_목록, _docfit_namespace)
     if _docfit_symbol == '_쪽맞춤_줄간격_되돌리기':
         def _쪽맞춤_줄간격_되돌리기(보관):
-            for pos, kind, value in 보관:
-                hwp.SetPos(*pos)
-                act = hwp.CreateAction('ParagraphShape')
-                pset = act.CreateSet()
-                pset.SetItem('LineSpacingType', kind)
-                pset.SetItem('LineSpacing', value)
-                act.Execute(pset)
+            from docfit_engine.layout_restore import restore_each, write_line_spacing, line_spacing_matches
+
+            def 복원(item):
+                try:
+                    write_line_spacing(hwp, *item)
+                except Exception as e:
+                    로그(f"줄간격 원복 중 오류(다시 읽어 확인): {e}")
+                return line_spacing_matches(hwp, *item)
+
+            restore_each(보관, 복원, '문단 줄간격')
         return bind_function(_쪽맞춤_줄간격_되돌리기, _docfit_namespace)
     if _docfit_symbol == '보고서_1쪽_맞춤':
         def 보고서_1쪽_맞춤(보고서, 번호=1, 목표쪽수=1, 원본줄간격=None, 원본줄자간=None, 여백조정=False):
@@ -2813,14 +2987,26 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 로그(f"보고서 {번호} {목표쪽수}쪽 맞춤 실패: 마지막 수단으로도 {목표쪽}쪽 안에 담지 못함(넘친 줄 {줄수}) — 원래 값으로 되돌림")
                 return False
             finally:
-                if not 완료:
-                    if 여백보관:
+                if not 완료 or 중단_요청됨():
+                    from docfit_engine.layout_restore import restore_all
+
+                    def 여백원복():
+                        if not 여백보관:
+                            return
                         위아래여백(여백보관)
-                    if 줄간격보관:
-                        _쪽맞춤_줄간격_되돌리기(줄간격보관)
-                    for 문단번호, 이전자간 in reversed(자간보관):
-                        문단_자간_적용(문단번호, 이전자간)
-                    쪽맞춤_레벨_적용(조사, 0)
+                        if 위아래여백() != tuple(여백보관):
+                            from docfit_engine.edit_failures import fail_required_edit
+                            fail_required_edit('위·아래 쪽 여백 원복을 확인하지 못했습니다.')
+
+                    def 줄간격원복():
+                        if 줄간격보관:
+                            _쪽맞춤_줄간격_되돌리기(줄간격보관)
+
+                    def 자간원복():
+                        for 문단번호, 이전자간 in reversed(자간보관):
+                            문단_자간_적용(문단번호, 이전자간)
+
+                    restore_all((여백원복, 줄간격원복, 자간원복, lambda: 쪽맞춤_원복(조사)))
         return bind_function(보고서_1쪽_맞춤, _docfit_namespace)
     if _docfit_symbol == '문단_화면줄수':
         def 문단_화면줄수(번호):
@@ -3134,6 +3320,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     pset = act.CreateSet()
                     act.GetDefault(pset)
                     if int(pset.Item('PagebreakBefore') or 0):
+                        해제기록 = globals().get('쪽맞춤_해제기록')
+                        if 해제기록 is not None:
+                            해제기록.append(번호)     # 쓰기 전에 적어 일부 적용도 되돌린다
                         쪽나눔_설정((0, 번호, 0), False)
                         해제 += 1
             finally:
@@ -3178,7 +3367,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(_쪽맞춤_바꾼문단_단어분리_재검사, _docfit_namespace)
     if _docfit_symbol == '_문서유형별_쪽맞춤_본체':
         def _문서유형별_쪽맞춤_본체():
-            global 쪽맞춤_보고서조정됨
+            global 쪽맞춤_보고서조정됨, 쪽맞춤_해제기록
             쪽맞춤_보고서조정됨 = False
             보고서, 제목문단 = 쪽맞춤_보고서_목록()
             if not 보고서:
@@ -3221,30 +3410,41 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     항목 = 쪽맞춤_보고서_목록(제목문단, 대상=번호)[0][번호]
                 if 번호 not in 목표 or 항목['end'] - 항목['start'] + 1 <= 목표[번호]:
                     continue
-                # 쪽 배치가 넣은 보고서 안의 쪽 나눔은 걷어내고 다시 잰다(원본에는 없던 빈 쪽을 만든다).
-                if _보고서_내부_쪽나눔_해제(항목):
-                    쪽맞춤_보고서조정됨 = True
-                    항목 = 쪽맞춤_보고서_목록(제목문단, 대상=번호)[0][번호]
-                    if 항목['end'] - 항목['start'] + 1 <= 목표[번호]:
-                        로그(f"보고서 {번호 + 1}: 보고서 안 쪽 나눔을 풀어 {목표[번호]}쪽 안에 들어감")
+                쪽맞춤_해제기록 = []
+                오류 = False
+                try:
+                    # 쪽 배치가 넣은 보고서 안의 쪽 나눔은 걷어내고 다시 잰다(원본에는 없던 빈 쪽을 만든다).
+                    if _보고서_내부_쪽나눔_해제(항목):
+                        쪽맞춤_보고서조정됨 = True
+                        항목 = 쪽맞춤_보고서_목록(제목문단, 대상=번호)[0][번호]
+                        if 항목['end'] - 항목['start'] + 1 <= 목표[번호]:
+                            로그(f"보고서 {번호 + 1}: 보고서 안 쪽 나눔을 풀어 {목표[번호]}쪽 안에 들어감")
+                            continue
+                    # 쪽 나눔으로 시작하는 붙임은 간격을 줄여도 앞 쪽으로 못 올라오므로 담을 수 없는 보고서는 바로 건너뛴다.
+                    if 붙임경계 is None:
+                        붙임경계 = 붙임쪽_경계_목록() or []
+                    붙임수 = 붙임쪽_보고서_쪽나눔수(항목, 붙임경계)
+                    if 붙임쪽_보고서_불가(목표[번호], 붙임수):
+                        로그(f"[쪽 수 맞춤] 보고서 {번호 + 1}: 쪽 나눔 붙임 {붙임수}개라 {목표[번호]}쪽 안에 담기 불가능 — "
+                             "간격 축소 건너뜀")
+                        hwp.SetPos(*위치)
+                        검수_문제_기록(현재_처리파일, f"[보고서 쪽 수 초과] 보고서 {번호 + 1}이 원래 {목표[번호]}쪽 안에 담기지 않음")
                         continue
-                # 쪽 나눔으로 시작하는 붙임은 간격을 줄여도 앞 쪽으로 못 올라오므로 담을 수 없는 보고서는 바로 건너뛴다.
-                if 붙임경계 is None:
-                    붙임경계 = 붙임쪽_경계_목록() or []
-                붙임수 = 붙임쪽_보고서_쪽나눔수(항목, 붙임경계)
-                if 붙임쪽_보고서_불가(목표[번호], 붙임수):
-                    로그(f"[쪽 수 맞춤] 보고서 {번호 + 1}: 쪽 나눔 붙임 {붙임수}개라 {목표[번호]}쪽 안에 담기 불가능 — "
-                         "간격 축소 건너뜀")
-                    hwp.SetPos(*위치)
-                    검수_문제_기록(현재_처리파일, f"[보고서 쪽 수 초과] 보고서 {번호 + 1}이 원래 {목표[번호]}쪽 안에 담기지 않음")
-                    continue
-                if 보고서_1쪽_맞춤(항목, 번호 + 1, 목표[번호], 원본[번호][2] if 원본 is not None else None,
-                               원본[번호][3] if 원본 is not None else None,
-                               여백조정=len(보고서) == 1 and 유형 != '취합보고서'):
-                    쪽맞춤_보고서조정됨 = True
-                else:
-                    hwp.SetPos(*위치)
-                    검수_문제_기록(현재_처리파일, f"[보고서 쪽 수 초과] 보고서 {번호 + 1}이 원래 {목표[번호]}쪽 안에 담기지 않음")
+                    if 보고서_1쪽_맞춤(항목, 번호 + 1, 목표[번호], 원본[번호][2] if 원본 is not None else None,
+                                   원본[번호][3] if 원본 is not None else None,
+                                   여백조정=len(보고서) == 1 and 유형 != '취합보고서'):
+                        쪽맞춤_보고서조정됨 = True
+                    else:
+                        hwp.SetPos(*위치)
+                        검수_문제_기록(현재_처리파일, f"[보고서 쪽 수 초과] 보고서 {번호 + 1}이 원래 {목표[번호]}쪽 안에 담기지 않음")
+                except BaseException:
+                    오류 = True
+                    raise
+                finally:
+                    해제기록, 쪽맞춤_해제기록 = 쪽맞춤_해제기록, None
+                    if 해제기록 and (오류 or 중단_요청됨()):
+                        from docfit_engine.layout_restore import restore_all
+                        restore_all([lambda n=n: _쪽나눔_원복((0, n, 0), True) for n in 해제기록])
             return True
         return bind_function(_문서유형별_쪽맞춤_본체, _docfit_namespace)
     if _docfit_symbol == '보고서_페이지수_맞춤_전체_적용':
@@ -3259,6 +3459,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             남는다(마지막 시도 이후 값이 남아있을 뿐, 구조를 깨지 않음).
             """
             global 쪽맞춤_묶음_확인됨, 쪽맞춤_묶음이동_결정
+            from docfit_engine.edit_failures import RequiredEditError
             # 여러 문서를 이어 처리할 때 앞 문서의 판단이 남지 않도록 매번 지운다.
             쪽맞춤_묶음_확인됨 = False
             쪽맞춤_묶음이동_결정 = False
@@ -3269,6 +3470,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             if 쪽맞춤_유형판정_사용:
                 try:
                     처리됨 = _문서유형별_쪽맞춤()
+                except RequiredEditError:
+                    raise
                 except Exception as e:
                     로그(f"문서 유형 판정 실패(무시하고 기존 방식): {e}")
                     처리됨 = False
