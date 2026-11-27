@@ -24,6 +24,7 @@ from docfit_core.log_mask import mask_log_text
 from docfit_core.timemachine.rules import cloud_only
 
 from .library_db import MTIME_TOLERANCE, Record, ViewSync, path_key
+from .photo_paths import PhotoPathLookup, photo_key
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ class PhotoStore:
     def refresh(self, path: str) -> None:
         """검색 중 파일 작업·태그 변경을 한 행의 보관 값에 반영한다."""
         with self.db._lock, closing(self.db._connect()) as connection:
+            path = PhotoPathLookup(connection).find(path)
             row = connection.execute("SELECT * FROM photos WHERE path=?", (path,)).fetchone()
             if row is None:
                 return
@@ -175,15 +177,23 @@ class PhotoStore:
     def write(self, upserts: Iterable[Record] = (), removes: Iterable[str] = (),
               seen: Iterable[str] = ()) -> None:
         """바뀐 행만 저장한다. 확인한 파일(`seen`)은 사진 DB 에 따로 남기지 않는다."""
+        upserts = [row for row in upserts if _storable(row[1])]
         rows: list[list[Any]] = []
         renames: list[tuple[str, str]] = []
+        # 입력 열쇠는 목록 엔진의 표기일 수 있다. 기존 행의 보관 값(촬영일/회전)도 같은 행에서 찾는다.
+        paths = {}
+        if upserts:
+            with self.db._lock, closing(self.db._connect()) as connection:
+                lookup = PhotoPathLookup(connection)
+                paths = {path: lookup.find(path) for _, path, *_ in upserts}
         for key, path, name, _, size, mtime, cloud, _ in upserts:
-            if not _storable(path):
-                continue
             old = self.saved.get(key)
-            date, orientation = _carried(old, size, mtime, cloud)
             if old is not None and old.path != path:
                 renames.append((old.path, path))
+            else:
+                path = paths[path]
+                old = self.saved.get(path_key(path))
+            date, orientation = _carried(old, size, mtime, cloud)
             rows.append([path, os.path.dirname(path), name, size or 0, mtime or 0, date, orientation, int(cloud)])
         gone = [self.saved[key].path for key in removes if key in self.saved]
         if not (rows or gone):
@@ -212,6 +222,21 @@ class PhotoViewSync(ViewSync):
                  roots: Iterable[Any], excluded: Iterable[Any] = ()) -> None:
         super().__init__(store, publish, roots=roots, excluded=excluded)
         self.store = store
+        self._alias_paths: dict[str, str] | None = None
+
+    def feed(self, row: dict[str, Any]) -> None:
+        """새 표기의 원천 행도 보관 중인 같은 사진에 연결한다. DB 경로는 옮기지 않는다."""
+        with self._lock:
+            path = row["path"]
+            if path_key(path) not in self._known:
+                if self._alias_paths is None:
+                    self._alias_paths = {}
+                    for record in self._known.values():
+                        self._alias_paths.setdefault(photo_key(record[1]), record[1])
+                stored = self._alias_paths.setdefault(photo_key(path), path)
+                if stored != path:
+                    row = {**row, "path": stored}
+            super().feed(row)
 
     def in_scope(self, path: str) -> bool:
         return self._in_scope(path_key(path))
