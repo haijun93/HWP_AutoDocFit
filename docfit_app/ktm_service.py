@@ -12,11 +12,15 @@ import json
 import logging
 import subprocess
 import sys
+import threading
+import time
+from copy import deepcopy
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
 SETTING_KEY = "mongttang_search"
 _TIMEOUT = 20
+STATUS_CACHE_SECONDS = 5.0
 
 
 def bundled_exe():
@@ -34,6 +38,8 @@ def status_text(status):
         return "상태를 알 수 없어요."
     if not status.get("ok", False):
         return f"오류: {status.get('error') or status.get('message') or '알 수 없음'}"
+    if status.get("applying"):
+        return "켜는 중…" if status.get("enabled") else "끄는 중…"
     if status.get("running"):
         if status.get("hotkey_error"):
             return f"실행 중이지만 단축키를 쓰지 못해요: {status['hotkey_error']}"
@@ -108,6 +114,67 @@ class KtmService:
         if status.get("running") and _same_file(exe, status.get("installed_path")):
             return {**status, "skipped": "up-to-date"}
         return self._run(exe, "--install", "--respect-disabled")
+
+
+class KtmStatusCache:
+    """브리지 수명의 상태: 미조회 → 유효/만료 → 적용 중 → 새 상태 또는 오류.
+
+    조회와 수명 명령은 직렬화한다. 적용 중에는 예전 켜짐/꺼짐을 반환하지 않고,
+    늦게 끝난 조회·이전 설정 작업이 최신 설정 상태를 덮지 못하게 세대를 확인한다.
+    """
+    def __init__(self, *, service=None, clock=None):
+        self._service = service or KtmService()
+        self._clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._operation = threading.Lock()
+        self._value = None
+        self._checked = 0.0
+        self._generation = 0
+
+    def _valid(self):
+        return self._value is not None and (self._value.get("applying") or
+                self._clock() - self._checked < STATUS_CACHE_SECONDS)
+
+    def status(self):
+        with self._lock:
+            if self._valid():
+                return deepcopy(self._value)
+        with self._operation:
+            with self._lock:
+                if self._valid():
+                    return deepcopy(self._value)
+                generation = self._generation
+            value = self._service.status()
+            with self._lock:
+                if generation == self._generation:
+                    self._value, self._checked = value, self._clock()
+                return deepcopy(self._value)
+
+    def apply_in_background(self, enabled):
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+            self._value = {"ok": True, "applying": True, "enabled": bool(enabled)}
+
+        def work():
+            with self._operation:
+                with self._lock:
+                    if generation != self._generation:
+                        return
+                try:
+                    value = self._service.apply_setting(enabled)
+                    if value.get("ok"):
+                        value = self._service.status()
+                except Exception:
+                    _log.exception("몽땅검색 설정 반영 실패")
+                    value = {"ok": False, "error": "몽땅검색 설정을 반영하지 못했어요."}
+                with self._lock:
+                    if generation == self._generation:
+                        self._value, self._checked = value, self._clock()
+
+        thread = threading.Thread(target=work, name="ktm-apply", daemon=True)
+        thread.start()
+        return thread
 
 
 def sync_in_background(enabled):

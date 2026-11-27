@@ -140,6 +140,8 @@ class DesktopWebBridge:
         self._conversion_prerequisites_checked = 0.0
         self._conversion_prerequisites_cache = None
         self._conversion_prerequisites_lock = threading.Lock()
+        from docfit_app.ktm_service import KtmStatusCache
+        self._ktm_status = KtmStatusCache()
         self._coverage_cache = {}
         self._close_lock = threading.Lock()
         self._close_protocol = False
@@ -1509,10 +1511,10 @@ class DesktopWebBridge:
     def _attach_ktm_status(self, snapshot):
         """설정 화면의 몽땅검색 칸에 지금 상태 한 줄을 붙인다(실패해도 설정 화면은 그대로)."""
         try:
-            from docfit_app.ktm_service import SETTING_KEY, KtmService, status_text
+            from docfit_app.ktm_service import SETTING_KEY, status_text
             fields = [f for f in snapshot.get('fields', []) if f.get('key') == SETTING_KEY]
             if fields:
-                text = status_text(KtmService().status())
+                text = status_text(self._ktm_status.status())
                 for field in fields:
                     field['status'] = text
         except Exception:
@@ -1531,11 +1533,8 @@ class DesktopWebBridge:
             self._configuration().save(values, revision, running=self.gui.running)
             if 'mongttang_search' in values:
                 # 몽땅검색 켜기·끄기는 상주 프로그램을 끄고 기다릴 수 있어(최대 수 초) Tk 밖 스레드에서 한다.
-                from docfit_app.ktm_service import KtmService
                 enabled = bool(values['mongttang_search'])
-                threading.Thread(target=lambda: logging.getLogger(__name__).info(
-                    "몽땅검색 설정 반영: %s", KtmService().apply_setting(enabled)),
-                    name='ktm-apply', daemon=True).start()
+                self._ktm_status.apply_in_background(enabled)
             if 'freeze_tracing' in values:
                 self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
