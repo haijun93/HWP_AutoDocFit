@@ -67,7 +67,7 @@ def configured_processor(processor, log=None, *, namespace=None):
                     if selections is not None:
                         command += ['--selections', str(sel)]
                 command += ['--config', str(config)]
-                completed = subprocess.run(command, capture_output=True, text=True,
+                completed = subprocess.run(command, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True,
                                            encoding='utf-8', timeout=120)
                 if completed.returncode:
                     raise RuntimeError(completed.stderr.strip() or f'종료 {completed.returncode}')

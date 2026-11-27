@@ -147,7 +147,7 @@ def convert_to_pandoc_format(source: str | Path, target: str | Path,
             completed = subprocess.run(
                 [pandoc, source_arg, f"--from={input_format}", f"--to={output_format}",
                  *( ["--standalone", "--embed-resources"] if target.suffix.lower() in {".html", ".htm"} else [] ),
-                 f"--resource-path={resource_path}", "--output", str(temp_output)],
+                 f"--resource-path={resource_path}", "--output", str(temp_output)], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
                 shell=False,
             )
@@ -436,7 +436,7 @@ def convert_input_to_hwpx(source: str | Path, target: str | Path) -> Path:
         with tempfile.TemporaryDirectory(prefix="docfit_html_") as folder:
             markdown = Path(folder) / "source.md"
             subprocess.run([pandoc, str(source.resolve(strict=True)), "--from=html", "--to=markdown",
-                            f"--resource-path={folder}", "--output", str(markdown)],
+                            f"--resource-path={folder}", "--output", str(markdown)], creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=600, check=True, shell=False)
             return convert_input_to_hwpx(markdown, target)
