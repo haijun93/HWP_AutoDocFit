@@ -165,7 +165,7 @@ class ControlRecheckTests(Base):
                 survey.assert_called_once()
 
     def test_first_pass_still_visits_single_cell_table(self):
-        """E04 는 그대로 둔다: 1차 순회는 한 칸 표(영역 2)도 다시 방문한다."""
+        """서식 단계가 앞서 돌지 않았으면 1차 순회가 한 칸 표(영역 2)를 방문한다(중복 방문 제외는 ONECELL1 시험)."""
         _, done, _, _ = self.run_control('컨트롤_내부_자간조정', None, single={2})
         self.assertEqual(done, [2, 3])
 

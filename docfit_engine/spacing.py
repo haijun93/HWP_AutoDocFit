@@ -2140,6 +2140,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             """
             if 재검사_본문뿐인가():
                 return not 중단_요청됨()   # 다시 볼 칸이 없으면 표를 조사하지 않는다.
+            # 바로 앞 서식 단계(한칸표_자간조정)가 이미 처리한 한 칸 표는 다시 방문하지 않는다. 같은 줄을 두 번
+            # 방문하면 '다음 단어 당김'이 한 줄에 두 번 적용된다(ONECELL1). 기록은 이번 순회에서 한 번만 쓴다.
+            처리됨 = set() if 재검사_대상문단 is not None else set(한칸표_처리영역)
+            한칸표_처리영역.clear()
             한칸표영역 = 한칸표_영역_목록()
             # 제목·중제목·붙임 서식 표와 사용자가 꾸민 표의 칸 글(예: 담당자 칸 '담당관:◎◎◎')은 공백 규칙으로
             # 바꾸지 않는다. 예전에는 콜론 공백 규칙이 담당자 칸에 빈칸을 넣어 서식 예시를 그대로 재연하지 못했다
@@ -2163,6 +2167,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if not 재검사_영역인가(area):
                     continue
                 현재영역_한칸표 = area in 한칸표영역
+                if 현재영역_한칸표 and area in 처리됨:
+                    continue
                 if (표셀_자간_제외인가()
                         and not (작업_모드 != 'spacing' and 현재영역_한칸표
                                  and area not in (디자인표_보호영역 or set()))):
@@ -2210,6 +2216,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             이 박스 안에서는 예산 부족만으로 실패로 남는다.
             """
             original = hwp.GetPos()
+            한칸표_처리영역.clear()
             try:
                 for area in sorted(한칸표_보호영역):
                     hwp.SetPos(area, 0, 0)
@@ -2232,6 +2239,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         nxt = hwp.GetPos()
                         if nxt[0] != area or nxt in (start, end):
                             break
+                    한칸표_처리영역.add(area)
                 return True
             finally:
                 hwp_run('Cancel')
