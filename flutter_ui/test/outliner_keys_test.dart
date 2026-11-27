@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -26,6 +27,7 @@ class _Engine {
   final List<Map<String, Object?>> keys = [];
   Map<String, Object?> Function(Map<String, Object?> request)? reply;
   int saves = 0;
+  Future<void>? gate; // 느린 엔진: 이 일이 끝날 때까지 key 응답을 미룬다.
 
   String get markdown => blocks.map((b) => '- ${b['text']}\n').join();
 
@@ -50,6 +52,7 @@ class _Engine {
         data = {'version': 'v$saves'};
       case 'key':
         keys.add(p);
+        if (gate != null) await gate;
         final index = p['block'] as int?;
         if (index != null && p['text'] != null) {
           blocks = [
@@ -189,6 +192,41 @@ void main() {
     expect(engine.keys, isEmpty);
     await _press(tester, LogicalKeyboardKey.arrowUp);
     expect(engine.operations, ['up']);
+  });
+
+  testWidgets('Tab pressed while a command is running is applied afterwards', (
+    tester,
+  ) async {
+    final engine = await _pump(tester, ['abcd']);
+    engine.reply = (p) {
+      if (p['operation'] != 'enter') return {};
+      engine.blocks = [
+        {'id': 1, 'text': 'ab', 'indent': 0, 'folded': false},
+        {'id': 2, 'text': 'cd', 'indent': 0, 'folded': false},
+      ];
+      return {
+        'markdown': engine.markdown,
+        'document': {'blocks': engine.blocks},
+        'cursor': {'block': 1, 'start': 0, 'end': 0},
+      };
+    };
+    await _focus(tester, 1, 2);
+    final release = Completer<void>();
+    engine.gate = release.future;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(engine.operations, ['enter'], reason: '처리 중에는 겹쳐 보내지 않는다');
+    engine.gate = null;
+    release.complete();
+    await tester.pumpAndSettle();
+    expect(engine.operations, ['enter', 'indent', 'outdent']);
+    expect(engine.keys[1]['block'], 1, reason: '커서가 옮겨 간 새 블록에 적용');
+    expect(engine.keys[2]['block'], 1);
   });
 
   testWidgets('cursor and focus follow the engine result', (tester) async {
