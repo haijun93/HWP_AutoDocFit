@@ -1643,6 +1643,26 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                     # 바뀐 문단은 XML에서 확정했으므로 뒤의 COM 표준서식이 글꼴을 다시 입히지 않게 한다.
                     _표준서식_XML텍스트 |= 연속줄
                     로그(f'[연속 줄 맞춤] 앞 항목(①)의 글자·문단 모양을 따른 문단 {len(연속줄)}개')
+            # INDENTW3: 확인한 글꼴·조건의 문단은 폭 표로 구한 내어쓰기를 여기서 바로 쓴다. 뒤의 Shift+Tab 단계는
+            # 값이 그대로인 문단을 건너뛴다. 실패하면 일괄 서식 결과를 그대로 두고 모두 한/글 방식으로 처리한다.
+            if result.applied and globals().get('표준서식_내어쓰기_사용', False):
+                from docfit_core import indent_table
+                성능판정 = indent_table.performance_decision(len(_표준서식_XML텍스트))
+                globals()['_폭표_성능판정'] = 성능판정
+                if not 성능판정.use_table:
+                    if indent_table.setting_on(globals().get('설정_불러오기')):
+                        로그(f'[폭 표 내어쓰기] 성능 폴백: XML 서식 확정 {성능판정.paragraphs}문단 '
+                             f'(<{indent_table.MIN_FORMATTED_PARAGRAPHS}), 기존 한/글 방식')
+                elif indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기')):
+                    try:
+                        snapshot = indent_table.PackageSnapshot.load(target)
+                        if indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'),
+                                                globals().get('현재_처리파일'), converted_hwpx=snapshot):
+                            표문단수 = indent_table.apply_in_place(
+                                target, 폭표_내어쓰기_오프셋, texts=_표준서식_XML텍스트, snapshot=snapshot)
+                            로그(f'[폭 표 내어쓰기] XML 직접 기록 {표문단수}문단')
+                    except Exception as error:
+                        로그(f'[폭 표 내어쓰기] 건너뜀({type(error).__name__}: {error})')
             _표준서식_XML간격 = dict(result.paragraph_spacing)
             globals()['_표준서식_XML기준확정'] = {t for t in _xml_기준확정 if t in result.formatted_texts}
             _알파_일괄서식_문서 = bool(result.applied)

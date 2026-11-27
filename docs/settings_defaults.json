@@ -9,6 +9,7 @@
   "rust_search_hierarchy": true,
   "prevent_word_split": true,
   "ratio_shrink": false,
+  "indent_table": false,
   "punctuation": true,
   "punctuation_threshold": "5",
   "keep_punctuation_set_together": true,

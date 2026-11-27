@@ -1,0 +1,724 @@
+{
+ "before": {
+  "wall_seconds": 32.56979360000696,
+  "com_calls": 18653,
+  "indent_seconds": 6.9372,
+  "stages": [
+   {
+    "name": "준비",
+    "seconds": 0.0765,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0765
+   },
+   {
+    "name": "열기",
+    "seconds": 0.3028,
+    "visits": 1,
+    "com_calls": 2,
+    "com_seconds": 0.1313,
+    "python_seconds": 0.1715
+   },
+   {
+    "name": "원본 쪽 구성 기록",
+    "seconds": 0.0098,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0098
+   },
+   {
+    "name": "준말 변환",
+    "seconds": 0.0268,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0268
+   },
+   {
+    "name": "제목·개요 가로 크기",
+    "seconds": 0.1117,
+    "visits": 1,
+    "com_calls": 18,
+    "com_seconds": 0.0496,
+    "python_seconds": 0.0621
+   },
+   {
+    "name": "보고서 표준서식",
+    "seconds": 5.2116,
+    "visits": 2,
+    "com_calls": 1968,
+    "com_seconds": 1.0299,
+    "python_seconds": 4.1817
+   },
+   {
+    "name": "텍스트 표(박스 그림) 변환",
+    "seconds": 0.6928,
+    "visits": 1,
+    "com_calls": 336,
+    "com_seconds": 0.6682,
+    "python_seconds": 0.0246
+   },
+   {
+    "name": "별표 위첨자",
+    "seconds": 0.0499,
+    "visits": 2,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0499
+   },
+   {
+    "name": "제목·개요·붙임 선행 서식",
+    "seconds": 0.0756,
+    "visits": 4,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0756
+   },
+   {
+    "name": "기본 표 서식",
+    "seconds": 0.0251,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0251
+   },
+   {
+    "name": "표 칸 너비",
+    "seconds": 2.0327,
+    "visits": 6,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 2.0327
+   },
+   {
+    "name": "한 칸 표 영역 조사",
+    "seconds": 0.0127,
+    "visits": 1,
+    "com_calls": 9,
+    "com_seconds": 0.0115,
+    "python_seconds": 0.0012
+   },
+   {
+    "name": "쪽 보호 해제",
+    "seconds": 0.2774,
+    "visits": 1,
+    "com_calls": 261,
+    "com_seconds": 0.2379,
+    "python_seconds": 0.0394
+   },
+   {
+    "name": "공백·문장부호·라벨(XML)",
+    "seconds": 2.5115,
+    "visits": 1,
+    "com_calls": 8,
+    "com_seconds": 0.4683,
+    "python_seconds": 2.0432
+   },
+   {
+    "name": "셀 안쪽 여백 강제 축소",
+    "seconds": 0.0032,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0028,
+    "python_seconds": 0.0003
+   },
+   {
+    "name": "셀 너비 본문 맞춤",
+    "seconds": 0.0014,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0011,
+    "python_seconds": 0.0003
+   },
+   {
+    "name": "표 테두리 선 굵기 통일",
+    "seconds": 0.0014,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0012,
+    "python_seconds": 0.0002
+   },
+   {
+    "name": "개요·한 칸 표 자간 조정",
+    "seconds": 0.0027,
+    "visits": 1,
+    "com_calls": 10,
+    "com_seconds": 0.0023,
+    "python_seconds": 0.0003
+   },
+   {
+    "name": "최종 서식 기준 내어쓰기",
+    "seconds": 4.0379,
+    "visits": 1,
+    "com_calls": 2092,
+    "com_seconds": 1.5928,
+    "python_seconds": 2.4451
+   },
+   {
+    "name": "부연설명 들여쓰기",
+    "seconds": 0.1907,
+    "visits": 1,
+    "com_calls": 520,
+    "com_seconds": 0.1696,
+    "python_seconds": 0.0212
+   },
+   {
+    "name": "문단 아래 간격 페이지 맞춤",
+    "seconds": 0.1704,
+    "visits": 1,
+    "com_calls": 327,
+    "com_seconds": 0.1506,
+    "python_seconds": 0.0198
+   },
+   {
+    "name": "개별 문단 페이지 배치",
+    "seconds": 10.1382,
+    "visits": 1,
+    "com_calls": 11781,
+    "com_seconds": 8.7876,
+    "python_seconds": 1.3506
+   },
+   {
+    "name": "최종 내어쓰기 재확인",
+    "seconds": 2.8993,
+    "visits": 1,
+    "com_calls": 1034,
+    "com_seconds": 0.7454,
+    "python_seconds": 2.154
+   },
+   {
+    "name": "검수 집계",
+    "seconds": 0.0,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0
+   },
+   {
+    "name": "저장 준비(쪽 보호·쪽 나누기 해제)",
+    "seconds": 0.2155,
+    "visits": 1,
+    "com_calls": 261,
+    "com_seconds": 0.1832,
+    "python_seconds": 0.0323
+   },
+   {
+    "name": "저장",
+    "seconds": 0.3737,
+    "visits": 1,
+    "com_calls": 14,
+    "com_seconds": 0.3602,
+    "python_seconds": 0.0135
+   },
+   {
+    "name": "저장 후 규칙 검수",
+    "seconds": 0.0001,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0001
+   },
+   {
+    "name": "무결성·숫자 대조",
+    "seconds": 0.0,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0
+   }
+  ],
+  "timings": {
+   "xml_parse": {
+    "calls": 51,
+    "inclusive_seconds": 0.12196329969447106,
+    "exclusive_seconds": 0.12196329969447106
+   },
+   "package_load": {
+    "calls": 11,
+    "inclusive_seconds": 1.8534694999689236,
+    "exclusive_seconds": 1.8534694999689236
+   },
+   "environment_gate": {
+    "calls": 1,
+    "inclusive_seconds": 0.0163608998991549,
+    "exclusive_seconds": 0.0163608998991549
+   },
+   "section_condition": {
+    "calls": 1,
+    "inclusive_seconds": 0.0002516999375075102,
+    "exclusive_seconds": 0.0002516999375075102
+   },
+   "paragraph_condition": {
+    "calls": 14,
+    "inclusive_seconds": 0.0022482998901978135,
+    "exclusive_seconds": 0.0022482998901978135
+   },
+   "character_condition": {
+    "calls": 9,
+    "inclusive_seconds": 0.001024200115352869,
+    "exclusive_seconds": 0.001024200115352869
+   },
+   "width_calculation": {
+    "calls": 14,
+    "inclusive_seconds": 0.1293468999210745,
+    "exclusive_seconds": 0.1293468999210745
+   },
+   "plan_document": {
+    "calls": 1,
+    "inclusive_seconds": 0.29569589998573065,
+    "exclusive_seconds": 0.006422100239433348
+   },
+   "xml_write": {
+    "calls": 1,
+    "inclusive_seconds": 0.5970338999759406,
+    "exclusive_seconds": 0.07672999997157604
+   },
+   "snapshot_cleanup": {
+    "calls": 3,
+    "inclusive_seconds": 5.763043699902482,
+    "exclusive_seconds": 5.763043699902482
+   },
+   "snapshot_save": {
+    "calls": 2,
+    "inclusive_seconds": 0.9556810000212863,
+    "exclusive_seconds": 0.9556810000212863
+   },
+   "indent/environment_gate": {
+    "calls": 4,
+    "inclusive_seconds": 0.005620299954898655,
+    "exclusive_seconds": 0.005620299954898655
+   },
+   "indent/snapshot_save": {
+    "calls": 2,
+    "inclusive_seconds": 0.832537200069055,
+    "exclusive_seconds": 0.832537200069055
+   },
+   "indent/package_load": {
+    "calls": 2,
+    "inclusive_seconds": 0.30940039991401136,
+    "exclusive_seconds": 0.30940039991401136
+   },
+   "indent/xml_parse": {
+    "calls": 4,
+    "inclusive_seconds": 0.009803500026464462,
+    "exclusive_seconds": 0.009803500026464462
+   },
+   "indent/section_condition": {
+    "calls": 2,
+    "inclusive_seconds": 0.0007646000012755394,
+    "exclusive_seconds": 0.0007646000012755394
+   },
+   "indent/paragraph_condition": {
+    "calls": 28,
+    "inclusive_seconds": 0.0016690000193193555,
+    "exclusive_seconds": 0.0016690000193193555
+   },
+   "indent/character_condition": {
+    "calls": 16,
+    "inclusive_seconds": 0.0007656001253053546,
+    "exclusive_seconds": 0.0007656001253053546
+   },
+   "indent/width_calculation": {
+    "calls": 28,
+    "inclusive_seconds": 0.1371678999857977,
+    "exclusive_seconds": 0.1371678999857977
+   },
+   "indent/plan_document": {
+    "calls": 2,
+    "inclusive_seconds": 0.46499010000843555,
+    "exclusive_seconds": 0.005419099936261773
+   },
+   "indent/snapshot_cleanup": {
+    "calls": 2,
+    "inclusive_seconds": 3.830533800064586,
+    "exclusive_seconds": 3.830533800064586
+   },
+   "indent/stage_prepare": {
+    "calls": 2,
+    "inclusive_seconds": 5.158547000028193,
+    "exclusive_seconds": 0.02486559993121773
+   },
+   "indent/com_recheck": {
+    "calls": 28,
+    "inclusive_seconds": 0.20916070009116083,
+    "exclusive_seconds": 0.20916070009116083
+   },
+   "indent_stages": {
+    "calls": 2,
+    "inclusive_seconds": 6.933464700123295,
+    "exclusive_seconds": 1.5657570000039414
+   }
+  },
+  "original_unchanged": true,
+  "copy_unchanged": true
+ },
+ "after": {
+  "wall_seconds": 27.06407570000738,
+  "com_calls": 18654,
+  "indent_seconds": 2.7277,
+  "stages": [
+   {
+    "name": "준비",
+    "seconds": 0.0704,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0704
+   },
+   {
+    "name": "열기",
+    "seconds": 0.2916,
+    "visits": 1,
+    "com_calls": 2,
+    "com_seconds": 0.1295,
+    "python_seconds": 0.162
+   },
+   {
+    "name": "원본 쪽 구성 기록",
+    "seconds": 0.0041,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0041
+   },
+   {
+    "name": "준말 변환",
+    "seconds": 0.0188,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0188
+   },
+   {
+    "name": "제목·개요 가로 크기",
+    "seconds": 0.0963,
+    "visits": 1,
+    "com_calls": 18,
+    "com_seconds": 0.0582,
+    "python_seconds": 0.0382
+   },
+   {
+    "name": "보고서 표준서식",
+    "seconds": 4.8669,
+    "visits": 2,
+    "com_calls": 1969,
+    "com_seconds": 1.126,
+    "python_seconds": 3.7409
+   },
+   {
+    "name": "텍스트 표(박스 그림) 변환",
+    "seconds": 0.6496,
+    "visits": 1,
+    "com_calls": 336,
+    "com_seconds": 0.6318,
+    "python_seconds": 0.0178
+   },
+   {
+    "name": "별표 위첨자",
+    "seconds": 0.0356,
+    "visits": 2,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0356
+   },
+   {
+    "name": "제목·개요·붙임 선행 서식",
+    "seconds": 0.0959,
+    "visits": 4,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0959
+   },
+   {
+    "name": "기본 표 서식",
+    "seconds": 0.0289,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0289
+   },
+   {
+    "name": "표 칸 너비",
+    "seconds": 2.0347,
+    "visits": 6,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 2.0347
+   },
+   {
+    "name": "한 칸 표 영역 조사",
+    "seconds": 0.0237,
+    "visits": 1,
+    "com_calls": 9,
+    "com_seconds": 0.0219,
+    "python_seconds": 0.0019
+   },
+   {
+    "name": "쪽 보호 해제",
+    "seconds": 0.2371,
+    "visits": 1,
+    "com_calls": 261,
+    "com_seconds": 0.2038,
+    "python_seconds": 0.0333
+   },
+   {
+    "name": "공백·문장부호·라벨(XML)",
+    "seconds": 2.4526,
+    "visits": 1,
+    "com_calls": 8,
+    "com_seconds": 0.4222,
+    "python_seconds": 2.0304
+   },
+   {
+    "name": "셀 안쪽 여백 강제 축소",
+    "seconds": 0.0035,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0032,
+    "python_seconds": 0.0003
+   },
+   {
+    "name": "셀 너비 본문 맞춤",
+    "seconds": 0.0016,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0014,
+    "python_seconds": 0.0003
+   },
+   {
+    "name": "표 테두리 선 굵기 통일",
+    "seconds": 0.0016,
+    "visits": 1,
+    "com_calls": 4,
+    "com_seconds": 0.0013,
+    "python_seconds": 0.0002
+   },
+   {
+    "name": "개요·한 칸 표 자간 조정",
+    "seconds": 0.0034,
+    "visits": 1,
+    "com_calls": 10,
+    "com_seconds": 0.0029,
+    "python_seconds": 0.0005
+   },
+   {
+    "name": "최종 서식 기준 내어쓰기",
+    "seconds": 1.7806,
+    "visits": 1,
+    "com_calls": 2092,
+    "com_seconds": 1.3166,
+    "python_seconds": 0.464
+   },
+   {
+    "name": "부연설명 들여쓰기",
+    "seconds": 0.1595,
+    "visits": 1,
+    "com_calls": 520,
+    "com_seconds": 0.1423,
+    "python_seconds": 0.0172
+   },
+   {
+    "name": "문단 아래 간격 페이지 맞춤",
+    "seconds": 0.1403,
+    "visits": 1,
+    "com_calls": 327,
+    "com_seconds": 0.1237,
+    "python_seconds": 0.0166
+   },
+   {
+    "name": "개별 문단 페이지 배치",
+    "seconds": 9.6237,
+    "visits": 1,
+    "com_calls": 11781,
+    "com_seconds": 8.3462,
+    "python_seconds": 1.2775
+   },
+   {
+    "name": "최종 내어쓰기 재확인",
+    "seconds": 0.9471,
+    "visits": 1,
+    "com_calls": 1034,
+    "com_seconds": 0.7306,
+    "python_seconds": 0.2165
+   },
+   {
+    "name": "검수 집계",
+    "seconds": 0.0,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0
+   },
+   {
+    "name": "저장 준비(쪽 보호·쪽 나누기 해제)",
+    "seconds": 0.2149,
+    "visits": 1,
+    "com_calls": 261,
+    "com_seconds": 0.1846,
+    "python_seconds": 0.0303
+   },
+   {
+    "name": "저장",
+    "seconds": 0.3552,
+    "visits": 1,
+    "com_calls": 14,
+    "com_seconds": 0.3424,
+    "python_seconds": 0.0128
+   },
+   {
+    "name": "저장 후 규칙 검수",
+    "seconds": 0.0001,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0001
+   },
+   {
+    "name": "무결성·숫자 대조",
+    "seconds": 0.0,
+    "visits": 1,
+    "com_calls": 0,
+    "com_seconds": 0.0,
+    "python_seconds": 0.0
+   }
+  ],
+  "timings": {
+   "xml_parse": {
+    "calls": 51,
+    "inclusive_seconds": 0.12623760011047125,
+    "exclusive_seconds": 0.12623760011047125
+   },
+   "package_load": {
+    "calls": 11,
+    "inclusive_seconds": 1.5662193997995928,
+    "exclusive_seconds": 1.5662193997995928
+   },
+   "environment_gate": {
+    "calls": 2,
+    "inclusive_seconds": 0.004603200010024011,
+    "exclusive_seconds": 0.004603200010024011
+   },
+   "section_condition": {
+    "calls": 1,
+    "inclusive_seconds": 0.00022739998530596495,
+    "exclusive_seconds": 0.00022739998530596495
+   },
+   "paragraph_condition": {
+    "calls": 14,
+    "inclusive_seconds": 0.0010053999722003937,
+    "exclusive_seconds": 0.0010053999722003937
+   },
+   "character_condition": {
+    "calls": 9,
+    "inclusive_seconds": 0.0005495997611433268,
+    "exclusive_seconds": 0.0005495997611433268
+   },
+   "width_calculation": {
+    "calls": 14,
+    "inclusive_seconds": 0.0624935997184366,
+    "exclusive_seconds": 0.0624935997184366
+   },
+   "plan_document": {
+    "calls": 1,
+    "inclusive_seconds": 0.07417539996095002,
+    "exclusive_seconds": 0.004975600517354906
+   },
+   "xml_write": {
+    "calls": 1,
+    "inclusive_seconds": 0.25693159992806613,
+    "exclusive_seconds": 0.03065149998292327
+   },
+   "snapshot_cleanup": {
+    "calls": 3,
+    "inclusive_seconds": 5.770699099986814,
+    "exclusive_seconds": 5.770699099986814
+   },
+   "snapshot_save": {
+    "calls": 2,
+    "inclusive_seconds": 0.883820400107652,
+    "exclusive_seconds": 0.883820400107652
+   },
+   "indent/environment_gate": {
+    "calls": 4,
+    "inclusive_seconds": 0.005686199874617159,
+    "exclusive_seconds": 0.005686199874617159
+   },
+   "indent/snapshot_save": {
+    "calls": 2,
+    "inclusive_seconds": 0.7482446000212803,
+    "exclusive_seconds": 0.7482446000212803
+   },
+   "indent/package_load": {
+    "calls": 2,
+    "inclusive_seconds": 0.28050999995321035,
+    "exclusive_seconds": 0.28050999995321035
+   },
+   "indent/xml_parse": {
+    "calls": 4,
+    "inclusive_seconds": 0.009049899992533028,
+    "exclusive_seconds": 0.009049899992533028
+   },
+   "indent/section_condition": {
+    "calls": 2,
+    "inclusive_seconds": 0.000988899962976575,
+    "exclusive_seconds": 0.000988899962976575
+   },
+   "indent/paragraph_condition": {
+    "calls": 28,
+    "inclusive_seconds": 0.0016378998989239335,
+    "exclusive_seconds": 0.0016378998989239335
+   },
+   "indent/character_condition": {
+    "calls": 16,
+    "inclusive_seconds": 0.0007550996961072087,
+    "exclusive_seconds": 0.0007550996961072087
+   },
+   "indent/width_calculation": {
+    "calls": 28,
+    "inclusive_seconds": 0.11847590003162622,
+    "exclusive_seconds": 0.11847590003162622
+   },
+   "indent/plan_document": {
+    "calls": 2,
+    "inclusive_seconds": 0.1356718000024557,
+    "exclusive_seconds": 0.004764100420288742
+   },
+   "indent/snapshot_cleanup": {
+    "calls": 2,
+    "inclusive_seconds": 0.0007742999587208033,
+    "exclusive_seconds": 0.0007742999587208033
+   },
+   "indent/stage_prepare": {
+    "calls": 2,
+    "inclusive_seconds": 1.1970873000100255,
+    "exclusive_seconds": 0.026200400199741125
+   },
+   "indent/com_recheck": {
+    "calls": 28,
+    "inclusive_seconds": 0.18323140020947903,
+    "exclusive_seconds": 0.18323140020947903
+   },
+   "indent_stages": {
+    "calls": 2,
+    "inclusive_seconds": 2.7237397000426427,
+    "exclusive_seconds": 1.3434209998231381
+   }
+  },
+  "original_unchanged": true,
+  "copy_unchanged": true
+ },
+ "output_comparison": {
+  "paragraph_counts": [
+   15,
+   15
+  ],
+  "same_count": true,
+  "text": [],
+  "styles": [],
+  "paragraph_other": [],
+  "max_margin_error_pt": 0.0,
+  "over_half_pt": 0
+ }
+}

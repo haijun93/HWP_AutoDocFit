@@ -1582,6 +1582,8 @@ _내어쓰기_여백쌍_설정 = _engine_resolve('docfit_engine.formatter', '_�
 
 
 _내어쓰기_한문단 = _engine_resolve('docfit_engine.formatter', '_내어쓰기_한문단', globals())
+폭표_내어쓰기_오프셋 = _engine_resolve('docfit_engine.formatter', '폭표_내어쓰기_오프셋', globals())
+_폭표_내어쓰기_검사 = _engine_resolve('docfit_engine.formatter', '_폭표_내어쓰기_검사', globals())
 
 
 _붙임목록_내어쓰기_대상수집 = _engine_resolve('docfit_engine.formatter', '_붙임목록_내어쓰기_대상수집', globals())
