@@ -32,6 +32,42 @@ def restore_all(steps):
         raise first
 
 
+def restore_char_spacing(hwp, hwp_run, records, apply, select, next_pos, fields):
+    """records(바꾼 순서대로의 [(시작, 끝, 자간 7칸)] 목록)의 글자 자간을 되돌리고 글자마다 다시 읽어 확인한다.
+
+    같은 글자가 여러 번 담겼으면 처음 담긴 값이 원래 값이다: 쓰기는 역순, 확인은 순서대로 처음 값만 본다.
+    apply(runs, 0), select(시작, 끝), next_pos(위치)는 단어 모드의 적용·선택·다음 글자 함수다.
+    """
+    for runs in reversed(records):
+        for run in runs:
+            try:
+                apply([run], 0)
+            except Exception:
+                pass                  # 적용 뒤 예외일 수 있어 결과는 다시 읽어 판단한다.
+    seen = set()
+
+    def matches(run):
+        pos, end, values = run
+        same = True
+        while pos[2] < end[2]:
+            nxt = next_pos(pos)
+            if not nxt or not pos[2] < nxt[2] <= end[2]:
+                return False
+            if pos not in seen:
+                seen.add(pos)
+                select(pos, nxt)
+                pset = hwp.HParameterSet.HCharShape
+                hwp.HAction.GetDefault('CharShape', pset.HSet)
+                same = tuple(int(getattr(pset, key)) for key in fields) == tuple(values) and same
+            pos = nxt
+        return same
+
+    try:
+        restore_each([run for runs in records for run in runs], matches, '글자 자간')
+    finally:
+        hwp_run('Cancel')
+
+
 def line_spacing_matches(hwp, pos, kind, value):
     hwp.SetPos(*pos)
     if tuple(hwp.GetPos()[:2]) != tuple(pos[:2]):

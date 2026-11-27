@@ -1074,6 +1074,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 자간값:
                     # 실행 도중 일부 run만 바뀌고 예외가 나도 복원한다.
                     자간적용됨 = True
+                    기록 = globals().get('쪽맞춤_자간기록')     # 1쪽 맞춤 중에만: 실패 때 되돌릴 원래 값
+                    if 기록 is not None and spacing_runs not in 기록:
+                        기록.append(spacing_runs)
                     단어모드_자간적용(spacing_runs, 자간값)
                 현재_최소장평 = min((v for _, _, vs in ratio_runs for v in vs), default=100)
                 장평_바닥 = 100 - 단어_장평_추가축소_최대_단계
@@ -1167,6 +1170,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             def 당김_확인(step):
                 nonlocal changed
                 changed = True
+                기록 = globals().get('쪽맞춤_자간기록')     # 1쪽 맞춤 중에만: 실패 때 되돌릴 원래 값
+                if 기록 is not None and runs not in 기록:
+                    기록.append(runs)                       # 쓰기 전에 적어 일부 적용도 되돌린다
                 단어모드_자간적용(runs, -step)
                 return 단어모드_줄범위(anchor)[1][2] >= 다음단어_끝[2]
 
