@@ -1,7 +1,7 @@
 //! 앱 화면에만 있던 사진 기능의 화면 상태와 배치(창과 무관한 순수 부분):
 //! 둘째 도구줄, 즐겨찾기·태그·중복 보기, 크게 보기, 사본 편집 입력.
 use crate::layout::{Rect, ROW2_H, TOOLBAR_H, scale};
-use crate::library::{Mark, key};
+use crate::library::{Mark, key, resolved_key};
 use crate::model::Doc;
 use crate::pixels::Image;
 use grid_core::file_ops::{FileResult, Operation};
@@ -211,7 +211,7 @@ pub struct Photo {
 
 impl Photo {
     pub fn mark(&self, path: &str) -> Option<&Mark> {
-        if self.marks.is_empty() { None } else { self.marks.get(&key(path)) }
+        if self.marks.is_empty() { None } else { self.marks.get(&key(path)).or_else(|| self.marks.get(&resolved_key(path))) }
     }
 
     pub fn filtering(&self) -> bool {

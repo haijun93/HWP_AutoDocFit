@@ -34,6 +34,15 @@ pub fn key(path: &str) -> String {
     plain(path).replace('/', "\\").to_lowercase()
 }
 
+/// 경로 별칭을 비교하는 조회 열쇠. 화면은 먼저 `key`로 찾고, 별칭일 때만 이것을 쓴다.
+pub fn resolved_key(path: &str) -> String {
+    // 있는 파일은 짧은 파일명까지 풀고, 없어진 파일은 부모만 풀어 옛 표시를 찾는다.
+    let resolved = std::fs::canonicalize(plain(path))
+        .map(|p| plain(&p.to_string_lossy()))
+        .unwrap_or_else(|_| stored_path(path));
+    key(&resolved)
+}
+
 /// `\\?\` 접두사를 뗀 보통 경로.
 fn plain(path: &str) -> String {
     if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
@@ -80,6 +89,25 @@ fn failed(e: impl std::fmt::Display) -> String {
     format!("즐겨찾기·태그 저장소 오류: {e}")
 }
 
+/// 정확한 기존 행을 우선하고, 없으면 파일 경로 별칭으로 찾는다. 행/태그를 옮기지 않는다.
+fn find_path(conn: &Connection, path: &str) -> rusqlite::Result<String> {
+    let stored = stored_path(path);
+    for candidate in [path, stored.as_str()] {
+        if conn.query_row("SELECT 1 FROM photos WHERE path=?1", [candidate], |_| Ok(())).optional()?.is_some() {
+            return Ok(candidate.to_string());
+        }
+    }
+    let wanted = resolved_key(path);
+    let mut statement = conn.prepare("SELECT path FROM photos ORDER BY path")?;
+    for row in statement.query_map([], |r| r.get::<_, String>(0))? {
+        let existing = row?;
+        if resolved_key(&existing) == wanted {
+            return Ok(existing);
+        }
+    }
+    Ok(stored)
+}
+
 impl Library {
     pub fn new(path: PathBuf) -> Library {
         Library { path }
@@ -122,21 +150,25 @@ impl Library {
             conn.prepare(sql)?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
         };
         for (path, _) in read("SELECT path, NULL FROM photos WHERE favorite = 1").map_err(failed)? {
-            marks.entry(key(&path)).or_default().favorite = true;
+            marks.entry(resolved_key(&path)).or_default().favorite = true;
         }
         for (path, tag) in read("SELECT photo_path, tag FROM tags ORDER BY tag").map_err(failed)? {
             if let Some(tag) = tag {
-                marks.entry(key(&path)).or_default().tags.push(tag);
+                marks.entry(resolved_key(&path)).or_default().tags.push(tag);
             }
+        }
+        for mark in marks.values_mut() {
+            mark.tags.sort();
+            mark.tags.dedup();
         }
         Ok(marks)
     }
 
     /// 즐겨찾기를 뒤집고 새 값을 돌려준다.
     pub fn toggle_favorite(&self, path: &str) -> Result<bool> {
-        let path = stored_path(path);
         let mut conn = self.writer()?;
         let tx = conn.transaction().map_err(failed)?;
+        let path = find_path(&tx, path).map_err(failed)?;
         let old: Option<i64> = tx
             .query_row("SELECT favorite FROM photos WHERE path = ?1", [&path], |r| r.get(0))
             .optional()
@@ -161,9 +193,9 @@ impl Library {
         if tag.is_empty() || tag.chars().count() > MAX_TAG || tag.chars().any(char::is_control) {
             return Err(format!("태그는 1~{MAX_TAG}자의 글자여야 합니다"));
         }
-        let path = stored_path(path);
         let mut conn = self.writer()?;
         let tx = conn.transaction().map_err(failed)?;
+        let path = find_path(&tx, path).map_err(failed)?;
         let exists: Option<i64> = tx.query_row("SELECT 1 FROM photos WHERE path = ?1", [&path], |r| r.get(0)).optional().map_err(failed)?;
         if exists.is_none() {
             insert_row(&tx, &path, false).map_err(failed)?;
@@ -176,10 +208,13 @@ impl Library {
         if !self.path.is_file() {
             return Ok(());
         }
-        self.writer()?
-            .execute("DELETE FROM tags WHERE photo_path = ?1 AND tag = ?2", params![stored_path(path), tag.trim()])
+        let mut conn = self.writer()?;
+        let tx = conn.transaction().map_err(failed)?;
+        let path = find_path(&tx, path).map_err(failed)?;
+        tx.execute("DELETE FROM tags WHERE photo_path = ?1 AND tag = ?2", params![path, tag.trim()])
             .map(|_| ())
-            .map_err(failed)
+            .map_err(failed)?;
+        tx.commit().map_err(failed)
     }
 
     /// 휴지통으로 보낸 사진의 행·태그를 지운다.
@@ -264,9 +299,12 @@ fn insert_row(conn: &Connection, path: &str, favorite: bool) -> rusqlite::Result
 
 /// 태그별 사진 수(보이는 목록에 있는 것만). 태그 이름 순.
 pub fn tag_counts<'a>(marks: &HashMap<String, Mark>, paths: impl Iterator<Item = &'a str>) -> Vec<(String, usize)> {
+    if marks.is_empty() {
+        return Vec::new();
+    }
     let mut counts = BTreeMap::<String, usize>::new();
     for path in paths {
-        if let Some(mark) = marks.get(&key(path)) {
+        if let Some(mark) = marks.get(&key(path)).or_else(|| marks.get(&resolved_key(path))) {
             for tag in &mark.tags {
                 *counts.entry(tag.clone()).or_default() += 1;
             }

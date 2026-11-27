@@ -48,6 +48,7 @@ from .kfind_process import restart_service
 from . import library_scan_cache
 from .library_db import _prefixes, file_record, path_key
 from .photo_library import ExifOrganizer, PhotoStore, PhotoViewSync, date_text, pending_photos
+from .photo_paths import PhotoPathLookup
 from .open_listed_file import open_listed_file
 from .doc_grid_service import find_klib_executable
 
@@ -334,6 +335,7 @@ class PhotoAlbumDb:
         folder_norm = _norm_path(folder)
         with self._lock, closing(self._connect()) as conn:
             with conn:
+                norm = PhotoPathLookup(conn).find(norm)
                 conn.execute(
                     """
                     INSERT INTO photos (path, folder, filename, size, mtime, date_taken, orientation, cloud)
@@ -354,6 +356,7 @@ class PhotoAlbumDb:
     def get_photo(self, path: str) -> dict[str, Any] | None:
         norm = _norm_path(path)
         with self._lock, closing(self._connect()) as conn:
+            norm = PhotoPathLookup(conn).find(norm)
             row = conn.execute("SELECT * FROM photos WHERE path = ?", (norm,)).fetchone()
             if not row:
                 return None
@@ -374,6 +377,8 @@ class PhotoAlbumDb:
         if not rows:
             return
         with self._lock, closing(self._connect()) as conn, conn:
+            lookup = PhotoPathLookup(conn)
+            rows = [(lookup.find(row[0]), *row[1:]) for row in rows]
             conn.executemany(
                 "INSERT INTO photos(path,folder,filename,size,mtime,date_taken,orientation,cloud)"
                 " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET"
@@ -385,6 +390,7 @@ class PhotoAlbumDb:
         norm = _norm_path(path)
         with self._lock, closing(self._connect()) as conn:
             with conn:
+                norm = PhotoPathLookup(conn).find(norm)
                 row = conn.execute("SELECT favorite FROM photos WHERE path = ?", (norm,)).fetchone()
                 if not row:
                     stat_size = 0
@@ -417,6 +423,7 @@ class PhotoAlbumDb:
             return self.get_tags(norm)
         with self._lock, closing(self._connect()) as conn:
             with conn:
+                norm = PhotoPathLookup(conn).find(norm)
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO photos (path, folder, filename, size, mtime, date_taken, orientation, favorite, cloud)
@@ -435,12 +442,14 @@ class PhotoAlbumDb:
         clean_tag = tag.strip()
         with self._lock, closing(self._connect()) as conn:
             with conn:
+                norm = PhotoPathLookup(conn).find(norm)
                 conn.execute("DELETE FROM tags WHERE photo_path = ? AND tag = ?", (norm, clean_tag))
         return self.get_tags(norm)
 
     def get_tags(self, path: str) -> list[str]:
         norm = _norm_path(path)
         with self._lock, closing(self._connect()) as conn:
+            norm = PhotoPathLookup(conn).find(norm)
             rows = conn.execute(
                 "SELECT tag FROM tags WHERE photo_path = ? ORDER BY tag", (norm,)
             ).fetchall()
@@ -451,6 +460,7 @@ class PhotoAlbumDb:
         cleaned = sorted({t.strip() for t in tags if t and t.strip()})
         with self._lock, closing(self._connect()) as conn:
             with conn:
+                norm = PhotoPathLookup(conn).find(norm)
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO photos (path, folder, filename, size, mtime, date_taken, orientation, favorite, cloud)
