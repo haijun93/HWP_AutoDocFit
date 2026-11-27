@@ -203,7 +203,8 @@ class EnvironmentTest(unittest.TestCase):
 
     def test_setting_turns_it_off(self):
         hwp = mock.Mock(Version="9, 6, 1, 10778")
-        self.assertTrue(it.enabled(hwp, lambda: {}))
+        self.assertFalse(it.enabled(hwp, lambda: {}))
+        self.assertTrue(it.enabled(hwp, lambda: {it.SETTING_KEY: True}))
         self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: False}))
         self.assertFalse(it.enabled(None, lambda: {}))
         self.assertFalse(it.enabled(hwp, None))
@@ -218,7 +219,7 @@ class EnvironmentTest(unittest.TestCase):
                 with self.subTest(name):
                     source = Path(folder) / name
                     source.write_bytes(content)
-                    self.assertEqual(expected, it.enabled(hwp, lambda: {}, str(source)))
+                    self.assertEqual(expected, it.enabled(hwp, lambda: {it.SETTING_KEY: True}, str(source)))
 
     def test_every_ttf_in_table_has_a_fingerprint(self):
         environment = it.environment_fingerprint()

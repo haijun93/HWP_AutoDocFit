@@ -33,7 +33,7 @@ def write_json(path, value):
 
 
 @contextlib.contextmanager
-def exclusive():
+def exclusive(owner="INDENTW4"):
     full = DEFAULT_COM_LOCK_PATH.with_name(".full-test.lock")
     # 다른 실행에서 물려받은 재진입 표식으로 배타 생성을 생략하지 않는다.
     os.environ.pop("DOCFIT_COM_LOCK_PATH", None)
@@ -41,7 +41,7 @@ def exclusive():
         while full.exists():
             print("waiting: full-test lock", flush=True)
             time.sleep(15)
-        with com_test_lock("INDENTW4", "synthetic validation", timeout_sec=7200):
+        with com_test_lock(owner, "synthetic validation", timeout_sec=7200):
             if full.exists():
                 continue
             yield

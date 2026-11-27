@@ -379,6 +379,12 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             """
             from docfit_core import indent_table
             검사 = indent_table.StageCheck()
+            # 파이프라인은 문서 시작 때 미확인(None), XML 일괄 서식 후 small/eligible로 전이한다.
+            # 단독 호출의 기존 호환 경로에는 이 키가 없으며, 그때는 아래 환경·문단 검사를 그대로 한다.
+            if '_폭표_성능판정' in globals():
+                성능판정 = globals()['_폭표_성능판정']
+                if 성능판정 is None or not 성능판정.use_table:
+                    return 검사
             if not indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기')):
                 return 검사
             folder = Path(tempfile.mkdtemp(prefix='hwp_format_first_'))
@@ -386,13 +392,15 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                 원위치 = hwp.GetPos()
                 source = _제목_임시hwpx_저장(folder / 'indent_table.hwpx')
                 hwp.SetPos(*원위치)
+                snapshot = indent_table.PackageSnapshot.load(source)
                 if indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'),
-                                        globals().get('현재_처리파일'), converted_hwpx=source):
-                    검사.plans = indent_table.plan_document(source, 폭표_내어쓰기_오프셋).plans
+                                        globals().get('현재_처리파일'), converted_hwpx=snapshot):
+                    검사.plans = indent_table.plan_document(snapshot, 폭표_내어쓰기_오프셋).plans
             except Exception as e:
                 로그(f"[폭 표 내어쓰기] 문서 확인 실패, 모두 한/글 방식으로 처리: {e}")
             finally:
-                _제목_임시폴더_정리(folder)
+                if not indent_table.cleanup_snapshot(folder):
+                    진단로그('[폭 표 내어쓰기] 사용 중인 스냅샷 정리를 다음 실행으로 보류')
             return 검사
         return bind_function(_폭표_내어쓰기_검사, _docfit_namespace)
     if _docfit_symbol == '_붙임목록_내어쓰기_대상수집':

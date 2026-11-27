@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +31,9 @@ from .batch_format import ParagraphStyle, StylePool, _serialize
 from .fidelity.package import PackageSnapshot, build_package
 
 SETTING_KEY = "indent_table"
+# INDENTW5: 14문단은 저장 비용을 회수하지 못했고, 59·299문단은 두 회차 모두 이득이었다.
+# 전체 문단 수가 아니라 XML 일괄 서식으로 확정한 고유 문단 수를 쓴다.
+MIN_FORMATTED_PARAGRAPHS = 59
 ENV_PATH = fw.DATA_PATH.with_name("font_widths_env.json")
 COM_UNIT = 2                       # ParaShape 여백 값 = HWPUNIT × 2
 _OLE_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")   # HWP 5.0 바이너리 문서의 머리
@@ -41,6 +45,23 @@ _BANNED_CHAR_ELEMENTS = ("italic", "emboss", "engrave", "supscript", "subscript"
 _SECTION_NAME = re.compile(r"Contents/section(\d+)\.xml")
 
 OffsetFunction = Callable[[str], "int | None"]
+
+
+@dataclass(frozen=True)
+class PerformanceDecision:
+    paragraphs: int | None
+    state: str                 # unmeasured → small | eligible, 문서마다 초기화
+
+    @property
+    def use_table(self) -> bool:
+        return self.state == "eligible"
+
+
+def performance_decision(paragraphs: int | None) -> PerformanceDecision:
+    """실측상 저장 비용을 회수한 최소 규모. 이 판정은 정확도·환경 검사를 대신하지 않는다."""
+    if not isinstance(paragraphs, int) or paragraphs <= 0:
+        return PerformanceDecision(paragraphs, "unmeasured")
+    return PerformanceDecision(paragraphs, "eligible" if paragraphs >= MIN_FORMATTED_PARAGRAPHS else "small")
 
 
 # ── 환경(한/글 판·글꼴 파일) ────────────────────────────────
@@ -119,21 +140,34 @@ def _hwp_source(path) -> bool:
         return False
 
 
+def setting_on(load_settings) -> bool:
+    """사용자가 켰는가. 읽지 못하면 False(기존 방식)이며 예외를 올리지 않는다."""
+    try:
+        return bool(load_settings().get(SETTING_KEY, False))
+    except Exception:
+        return False
+
+
 def enabled(hwp, load_settings, source=None, *, converted_hwpx=None) -> bool:
-    """설정이 켜져 있고(기본 켜짐) 열려 있는 한/글이 표를 실측한 판인가. 확인하지 못하면 False(기존 방식).
+    """설정이 켜져 있고(기본 꺼짐) 열려 있는 한/글이 표를 실측한 판인가. 확인하지 못하면 False(기존 방식).
 
     ``source`` 는 처리 중인 원본 파일. HWP 는 실제 작업용 ``converted_hwpx`` 패키지가 있을 때만 허용한다.
     바이너리 원본 자체에는 XML 계산을 적용하지 않는다. 글꼴·문단 조건은 ``plan_document`` 가 가린다.
     """
     try:
-        if not bool(load_settings().get(SETTING_KEY, True)) or not version_matches(hwp.Version):
+        if not setting_on(load_settings) or not version_matches(hwp.Version):
             return False
         if source is not None and _hwp_source(source):
-            if converted_hwpx is None or _hwp_source(converted_hwpx):
+            if converted_hwpx is None:
                 return False
             # 경로 문자열이나 확장자만으로 HWP 변환이 끝났다고 간주하지 않는다.
-            snapshot = PackageSnapshot.load(converted_hwpx)
-            if "Contents/header.xml" not in snapshot.entries or not any(
+            if isinstance(converted_hwpx, PackageSnapshot):
+                snapshot = converted_hwpx
+            else:
+                if _hwp_source(converted_hwpx):
+                    return False
+                snapshot = PackageSnapshot.load(converted_hwpx)
+            if snapshot.format != "hwpx" or "Contents/header.xml" not in snapshot.entries or not any(
                     _SECTION_NAME.fullmatch(name) for name in snapshot.entries):
                 return False
         return True
@@ -314,9 +348,10 @@ class Document:
     plans: dict             # 본문 문단 번호(구역을 이어 센 값, 한/글 SetPos(0, n)) → Plan
 
 
-def plan_document(path: str | Path, offset_of: OffsetFunction) -> Document:
+def plan_document(path: str | Path | PackageSnapshot, offset_of: OffsetFunction) -> Document:
     """HWPX 에서 표 계산을 쓸 수 있는 문단과 써야 할 값을 구한다. 파일은 바꾸지 않는다."""
-    snapshot = PackageSnapshot.load(path)
+    # 한 저장본의 변환 확인과 계획에서 같은 불변 바이트를 쓴다. 단계 사이 캐시는 아니다.
+    snapshot = path if isinstance(path, PackageSnapshot) else PackageSnapshot.load(path)
     names = sorted((n for n in snapshot.entries if _SECTION_NAME.fullmatch(n)),
                    key=lambda n: int(_SECTION_NAME.fullmatch(n).group(1)))
     header = ET.fromstring(snapshot.read("Contents/header.xml"))
@@ -331,6 +366,7 @@ def plan_document(path: str | Path, offset_of: OffsetFunction) -> Document:
     attachments = {i for start, end in find_trailing_numbered_blocks(texts) for i in range(start, end + 1)}
     infos = {n: _section_info(sections[n]) for n in names}
     styles: dict = {}
+    shapes: dict = {}
     plans = {}
     for index, (name, paragraph) in enumerate(body):
         info = infos[name]
@@ -338,7 +374,10 @@ def plan_document(path: str | Path, offset_of: OffsetFunction) -> Document:
         if info is None or index in attachments or not text or not text.strip():
             continue
         offset = offset_of(text)
-        shape = _para_shape(paras.get(paragraph.get("paraPrIDRef")))
+        ref = paragraph.get("paraPrIDRef")
+        if ref not in shapes:
+            shapes[ref] = _para_shape(paras.get(ref))
+        shape = shapes[ref]
         if offset is None or offset <= 0 or shape is None or (shape.justify and info.wraps_text):
             continue
         runs = []
@@ -366,10 +405,13 @@ def plan_document(path: str | Path, offset_of: OffsetFunction) -> Document:
     return Document(snapshot, header, sections, plans)
 
 
-def apply_in_place(path: str | Path, offset_of: OffsetFunction, texts=None) -> int:
+def apply_in_place(path: str | Path, offset_of: OffsetFunction, texts=None, *, snapshot=None) -> int:
     """표 계산이 가능한 문단(``texts`` 를 주면 그 글의 문단만)의 left/intent 를 직접 쓴다. 쓴 문단 수."""
     path = Path(path)
-    document = plan_document(path, offset_of)
+    if snapshot is not None and (Path(snapshot.path).resolve() != path.resolve()
+                                 or snapshot.data != path.read_bytes()):
+        raise ValueError("다른 파일이나 변경 전 스냅샷으로 내어쓰기를 기록할 수 없습니다.")
+    document = plan_document(snapshot if snapshot is not None else path, offset_of)
     chosen = [plan for plan in document.plans.values() if texts is None or plan.text in texts]
     chosen = [plan for plan in chosen if plan.current != (plan.left, plan.intent)]
     if not chosen:
@@ -394,6 +436,20 @@ def apply_in_place(path: str | Path, offset_of: OffsetFunction, texts=None) -> i
         if temporary.exists():
             temporary.unlink()
     return len(chosen)
+
+
+def cleanup_snapshot(folder) -> bool:
+    """한/글이 잡은 SaveAs 파일은 기다리지 않는다. 기존 오래된 임시폴더 정리가 재시도한다.
+
+    hwp_format_first_ 접두어·보존 시간·소유 문서의 정상 종료 정책은 그대로 둔다.
+    """
+    try:
+        shutil.rmtree(folder)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
 
 
 class StageCheck:

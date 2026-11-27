@@ -70,26 +70,26 @@ class ValidationInventoryTest(unittest.TestCase):
         hwp = mock.Mock(Version=it.environment_fingerprint()["hangul"])
         original = self.path.with_suffix(".hwp")
         original.write_bytes(it._OLE_MAGIC + b"synthetic")
-        self.assertFalse(it.enabled(hwp, lambda: {}, original))
-        self.assertTrue(it.enabled(hwp, lambda: {}, original, converted_hwpx=self.path))
-        self.assertFalse(it.enabled(hwp, lambda: {}, original, converted_hwpx=original))
-        self.assertFalse(it.enabled(hwp, lambda: {}, original, converted_hwpx=self.path.with_name("missing.hwpx")))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original))
+        self.assertTrue(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=self.path))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=original))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=self.path.with_name("missing.hwpx")))
         self.path.write_bytes(b"not a package")
-        self.assertFalse(it.enabled(hwp, lambda: {}, original, converted_hwpx=self.path))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=self.path))
 
     def test_renamed_binary_uses_the_same_conversion_gate(self):
         hwp = mock.Mock(Version=it.environment_fingerprint()["hangul"])
         original = self.path.with_name("renamed.hwpx")
         original.write_bytes(it._OLE_MAGIC + b"synthetic")
-        self.assertFalse(it.enabled(hwp, lambda: {}, original))
-        self.assertTrue(it.enabled(hwp, lambda: {}, original, converted_hwpx=self.path))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original))
+        self.assertTrue(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=self.path))
 
     def test_conversion_does_not_bypass_settings_or_environment(self):
         hwp = mock.Mock(Version=it.environment_fingerprint()["hangul"])
         original = self.path.with_suffix(".hwp")
         self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: False}, original, converted_hwpx=self.path))
         hwp.Version = "unmeasured"
-        self.assertFalse(it.enabled(hwp, lambda: {}, original, converted_hwpx=self.path))
+        self.assertFalse(it.enabled(hwp, lambda: {it.SETTING_KEY: True}, original, converted_hwpx=self.path))
 
     def test_hwp_stage_uses_its_saved_snapshot(self):
         ns = runpy.run_path(str(Path(__file__).resolve().parents[1] / "hwp-auto-docfit.py"))
@@ -97,7 +97,7 @@ class ValidationInventoryTest(unittest.TestCase):
         hwp = mock.Mock(Version=it.environment_fingerprint()["hangul"], GetPos=lambda: (0, 1, 0))
         save = mock.Mock(return_value=self.path)
         with mock.patch.object(it, "font_verified", return_value=True), mock.patch.dict(fn.__globals__, {
-            "hwp": hwp, "설정_불러오기": lambda: {}, "현재_처리파일": self.path.with_suffix(".hwp"),
+            "hwp": hwp, "설정_불러오기": lambda: {it.SETTING_KEY: True}, "현재_처리파일": self.path.with_suffix(".hwp"),
             "_제목_임시hwpx_저장": save, "_제목_임시폴더_정리": lambda folder: folder.rmdir(),
             "폭표_내어쓰기_오프셋": hanging_indent_offset,
         }):
