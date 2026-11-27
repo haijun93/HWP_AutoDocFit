@@ -2446,6 +2446,7 @@ _괄호따옴표_시작문자인가 = _engine_resolve('docfit_engine.spacing', '
 
 
 쪽나눔_설정 = _engine_resolve('docfit_engine.page_fit', '쪽나눔_설정', globals())
+_쪽나눔_원복 = _engine_resolve('docfit_engine.page_fit', '_쪽나눔_원복', globals())
 
 
 _묶음_쪽나눔_이동 = _engine_resolve('docfit_engine.page_fit', '_묶음_쪽나눔_이동', globals())
@@ -2651,6 +2652,7 @@ _표_셀_대상_순회 = _engine_resolve('docfit_engine.page_fit', '_표_셀_대
 
 
 쪽맞춤_레벨_적용 = _engine_resolve('docfit_engine.page_fit', '쪽맞춤_레벨_적용', globals())
+쪽맞춤_원복 = _engine_resolve('docfit_engine.page_fit', '쪽맞춤_원복', globals())
 
 
 _보고서_페이지수_맞춤_고속 = _engine_resolve('docfit_engine.page_fit', '_보고서_페이지수_맞춤_고속', globals())
