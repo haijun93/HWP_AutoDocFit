@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/theme/app_theme.dart';
 import 'outliner_history.dart';
+import 'outliner_typeahead.dart';
 import 'outliner_typing.dart';
 
 class OutlinerWorkspace extends StatefulWidget {
@@ -55,9 +56,17 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   String? _version;
   String _message = '';
   bool _busy = false;
-  // 명령 처리 중에 누른 Tab·Shift+Tab 은 버리지 않고 끝난 뒤 차례로 적용한다(OUTFLASH1).
-  final List<({String operation, Object? block, String? page})> _queuedIndents = [];
-  Object? _focusTarget; // 지금 명령이 커서를 옮긴 블록
+  // 명령 처리 중에 누른 Enter·Tab 은 버리지 않고 끝난 뒤 차례로 적용한다(OUTFLASH1·OUTKEYS2).
+  // [before] 는 앞 명령과 이 키 사이에 친 글이다.
+  final List<({String operation, TextEditingValue before, String? page})>
+  _queued = [];
+  static const _queueLimit = 64;
+  bool _editing = false; // 처리 중인 명령이 블록 편집이라 이어 치는 글을 받는다
+  // 마지막 명령이 커서를 둔 블록과 그때의 칸(친 글을 뺀 상태).
+  ({Object? id, TextEditingValue value})? _at;
+  // 입력 중인 칸 = 이 값 + 마지막 예약 키 뒤에 친 글.
+  ({Object? id, TextEditingValue value})? _base;
+  Object? _pendingFocus; // 다음 그리기 뒤에 커서를 옮길 블록
   String _pageQuery = '';
   final _search = TextEditingController();
   final Map<Object, TextEditingController> _editors = {};
@@ -370,47 +379,166 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     });
   }
 
-  Future<void> _run(Future<void> Function() action) async {
-    _focusTarget = null;
+  /// [editing] 이면 처리 중에 친 글·Enter·Tab 을 받는다. [typed] 는 명령에 보낸 칸의 상태로,
+  /// 결과가 칸의 글을 바꾸는 명령만 준다.
+  Future<void> _run(
+    Future<void> Function() action, {
+    bool editing = false,
+    ({Object? id, TextEditingValue value})? typed,
+  }) async {
+    _editing = editing;
+    _at = _base = typed;
     setState(() {
       _busy = true;
       _message = '';
     });
+    var failed = false;
     try {
       await action();
       if (mounted) setState(() {});
     } catch (e) {
-      _queuedIndents.clear(); // 실패한 명령 뒤의 예약은 적용하지 않는다.
+      failed = true;
       if (mounted) setState(() => _message = '$e');
     } finally {
       if (mounted) {
         setState(() => _busy = false);
-        if (_queuedIndents.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _applyQueuedIndent());
-          WidgetsBinding.instance.scheduleFrame();
+        if (failed) {
+          _abortQueued();
+        } else if (_queued.isNotEmpty) {
+          _runQueued();
+        } else {
+          _at = _base = null;
         }
       }
     }
   }
 
-  void _applyQueuedIndent() {
-    if (!mounted || _busy || _queuedIndents.isEmpty) return;
-    final next = _queuedIndents.removeAt(0);
-    if (next.page != _page) {
-      _queuedIndents.clear();
+  /// 예약한 키를 적용하지 않는다. 친 글은 이미 칸에 있으므로 칸을 지키기만 한다.
+  void _abortQueued() {
+    final count = _queued.length;
+    _queued.clear();
+    final id = _base?.id;
+    _at = _base = null;
+    final block = _blocks.where((b) => b['id'] == id).firstOrNull;
+    final controller = _editors[id];
+    // 포커스 없는 칸은 다음 그리기에서 문서 글로 되돌아가므로 커서를 돌려놓는다.
+    if (block != null &&
+        controller != null &&
+        controller.text != '${block['text'] ?? ''}') {
+      _focusNodes[id]?.requestFocus();
+    }
+    if (count > 0) {
+      setState(
+        () => _message = [
+          if (_message.isNotEmpty) _message,
+          '처리 중에 누른 Enter·Tab $count개는 적용하지 않았습니다. 친 글은 칸에 남아 있습니다.',
+        ].join('\n'),
+      );
+    }
+  }
+
+  void _runQueued() {
+    final next = _queued.first;
+    final cursor = _at;
+    final base = _base;
+    final controller = _editors[cursor?.id];
+    final at = _blocks.indexWhere((b) => b['id'] == cursor?.id);
+    if (cursor == null ||
+        base == null ||
+        controller == null ||
+        at < 0 ||
+        next.page != _page ||
+        _selectedIds.isNotEmpty) {
+      _abortQueued();
       return;
     }
-    final id = _focusTarget ?? next.block;
-    final at = _blocks.indexWhere((b) => b['id'] == id);
-    if (at < 0) return;
-    // 이어지는 예약도 같은 블록에 적용되게 한다(_run 이 _focusTarget 을 비운다).
-    final rest = [
-      for (final q in _queuedIndents) (operation: q.operation, block: id, page: q.page),
-    ];
-    _queuedIndents
-      ..clear()
-      ..addAll(rest);
-    _key(next.operation, block: _blocks[at]);
+    final live = typedSince(base.value, controller.value);
+    _queued.removeAt(0);
+    final value = insertTyped(cursor.value, next.before);
+    _key(next.operation, block: _blocks[at], value: value);
+    // 아직 보내지 않은 글은 계속 칸에 보인다.
+    final rest = _queued.fold(value, (v, q) => insertTyped(v, q.before));
+    _base = (id: cursor.id, value: rest);
+    _setValue(controller, insertTyped(rest, live));
+  }
+
+  void _setValue(TextEditingController controller, TextEditingValue value) {
+    if (controller.text != value.text ||
+        controller.selection != value.selection) {
+      controller.value = value;
+    }
+  }
+
+  /// 처리 중에 누른 Enter·Tab 을 예약한다.
+  void _enqueue(String operation, Object? pressedId) {
+    if (_queued.length >= _queueLimit) return;
+    final id = _base?.id ?? pressedId;
+    final controller = _editors[id];
+    if (controller == null) return;
+    controller.clearComposing(); // 조합 중이던 글자는 칸의 글에 이미 들어 있다.
+    final now = controller.value;
+    final base = _base;
+    // 칸의 글을 바꾸지 않는 명령(다른 칸 저장 등) 중: 지금 칸이 그대로 기준이다.
+    if (base == null) _at = (id: id, value: now);
+    _queued.add((
+      operation: operation,
+      before: base == null
+          ? TextEditingValue.empty
+          : typedSince(base.value, now),
+      page: _page,
+    ));
+    _base = (id: id, value: now);
+  }
+
+  /// 결과를 칸에 반영하면서, 처리 중에 친 글을 커서가 옮겨 간 블록으로 옮긴다.
+  void _placeCursor(Object? cursor) {
+    final base = _base;
+    if (base == null) {
+      _syncEditorsToBlocks();
+      return;
+    }
+    final old = _editors[base.id];
+    final live = old == null
+        ? TextEditingValue.empty
+        : typedSince(base.value, old.value);
+    final ahead = _queued.isNotEmpty || live.text.isNotEmpty;
+    var index = cursor is Map ? cursor['block'] as int? ?? 0 : -1;
+    if (index < 0 || index >= _blocks.length) {
+      index = _blocks.indexWhere((b) => b['id'] == base.id);
+      if (index < 0) index = _blocks.length - 1;
+    }
+    if (index < 0) {
+      _syncEditorsToBlocks();
+      return;
+    }
+    final id = _blocks[index]['id'];
+    final text = '${_blocks[index]['text'] ?? ''}';
+    final controller = _editors.putIfAbsent(
+      id,
+      () => TextEditingController(text: text),
+    );
+    var selection = TextSelection.collapsed(offset: text.length);
+    if (cursor is Map) {
+      final start = (cursor['start'] as int? ?? text.length).clamp(
+        0,
+        text.length,
+      );
+      selection = TextSelection(
+        baseOffset: start,
+        extentOffset: (cursor['end'] as int? ?? start).clamp(0, text.length),
+      );
+    } else if (id == base.id && controller.text == text) {
+      selection = controller.selection;
+    } else if (id == base.id && base.value.text == text) {
+      selection = base.value.selection;
+    }
+    _syncEditorsToBlocks(except: id);
+    final clean = TextEditingValue(text: text, selection: selection);
+    final rest = _queued.fold(clean, (v, q) => insertTyped(v, q.before));
+    _at = (id: id, value: clean);
+    _base = (id: id, value: rest);
+    _setValue(controller, insertTyped(rest, live));
+    if (cursor is Map || ahead) _focusBlockAfterBuild(id, keep: true);
   }
 
   Future<void> _edit(Map block, String operation, [String? text]) async {
@@ -431,7 +559,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .toList();
       await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
-    });
+    }, editing: true);
   }
 
   void _extendSelection(Object? id) {
@@ -465,6 +593,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     Map? block,
     String? paste,
     bool selection = false,
+    TextEditingValue? value,
   }) async {
     if (_page == null || _busy) return;
     final controller = block == null ? null : _editors[block['id']];
@@ -473,16 +602,26 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         ? _indicesWhere((b) => _selectedIds.contains(b['id']))
         : const <int>[];
     if (selection && selected.isEmpty) return;
-    final text = controller?.text;
+    final field = value ?? controller?.value;
+    final text = field?.text;
     var start = 0;
     var end = 0;
-    if (controller != null) {
-      final s = controller.selection;
-      start = s.isValid ? s.start : controller.text.length;
-      end = s.isValid ? s.end : controller.text.length;
+    if (field != null) {
+      final s = field.selection;
+      start = s.isValid ? s.start : field.text.length;
+      end = s.isValid ? s.end : field.text.length;
       // 조합 중이던 글자는 칸의 글에 이미 들어 있다 — 확정 표시만 지워 두 번 들어가지 않게 한다.
-      controller.clearComposing();
+      if (value == null) controller!.clearComposing();
     }
+    final typed = block == null || text == null
+        ? null
+        : (
+            id: block['id'] as Object?,
+            value: TextEditingValue(
+              text: text,
+              selection: TextSelection(baseOffset: start, extentOffset: end),
+            ),
+          );
     final forward = _selectionForward();
     _closePopup();
     await _run(() async {
@@ -511,11 +650,16 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .whereType<Map>()
           .toList();
       _message = result['note'] as String? ?? '';
-      _syncEditorsToBlocks();
       final chosen = [
         for (final i in result['selection'] as List? ?? const [])
           if (i is int && i < _blocks.length) _blocks[i]['id'],
       ];
+      // 그 사이에 친 글이 있으면 블록 선택 대신 커서를 두어 글을 지킨다.
+      if (typed != null &&
+          (_queued.isNotEmpty ||
+              (controller != null && controller.text != _base?.value.text))) {
+        chosen.clear();
+      }
       _selectedIds
         ..clear()
         ..addAll(chosen);
@@ -527,25 +671,18 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         _selectionCurrent = forward ? chosen.last : chosen.first;
       }
       // 저장을 기다리기 전에 커서를 옮겨, 이어 치는 글이 새 위치로 들어가게 한다.
-      final cursor = result['cursor'];
-      if (mounted) setState(() {});
-      if (cursor is Map) {
-        final at = cursor['block'] as int? ?? 0;
-        if (at < _blocks.length) {
-          _focusBlockAfterBuild(
-            _blocks[at]['id'],
-            cursor['start'] as int?,
-            cursor['end'] as int?,
-          );
-        }
-      } else if (chosen.isNotEmpty) {
-        _focusBlockAfterBuild(_selectionCurrent);
+      if (mounted && typed != null && chosen.isEmpty) {
+        _placeCursor(result['cursor']);
+      } else if (mounted) {
+        _syncEditorsToBlocks();
+        if (chosen.isNotEmpty) _focusBlockAfterBuild(_selectionCurrent);
       }
+      if (mounted) setState(() {});
       if (_markdown != before) {
         await _saveRecording(before);
         if (_page != null) await _rememberPage(_page!);
       }
-    });
+    }, editing: typed != null, typed: typed);
   }
 
   bool _selectionForward() {
@@ -586,26 +723,50 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     if (insert.contains('\n')) await _key('commit', block: block);
   }
 
-  void _focusBlockAfterBuild(Object? id, [int? start, int? end]) {
+  /// [keep] 이면 칸에 이미 정해 둔 커서를 그대로 둔다.
+  void _focusBlockAfterBuild(Object? id, {bool keep = false}) {
     if (id == null) return;
-    _focusTarget = id;
+    _pendingFocus = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _pendingFocus != id) return;
+      _pendingFocus = null;
       final node = _focusNodes[id];
       if (node != null && node.canRequestFocus) {
-        node.requestFocus();
         final controller = _editors[id];
-        if (controller != null) {
-          final length = controller.text.length;
-          final base = (start ?? length).clamp(0, length);
-          controller.selection = TextSelection(
-            baseOffset: base,
-            extentOffset: (end ?? base).clamp(0, length),
+        if (keep && controller != null) _adoptStrayInput(id, controller);
+        node.requestFocus();
+        if (!keep && controller != null) {
+          controller.selection = TextSelection.collapsed(
+            offset: controller.text.length,
           );
         }
       }
     });
     WidgetsBinding.instance.scheduleFrame();
+  }
+
+  /// 결과를 반영한 뒤 커서가 옮겨 가기 전에 옛 칸에 들어온 글을 새 칸으로 가져온다.
+  void _adoptStrayInput(Object? to, TextEditingController target) {
+    for (final block in _blocks) {
+      final id = block['id'];
+      final controller = _editors[id];
+      final text = '${block['text'] ?? ''}';
+      if (id == to ||
+          controller == null ||
+          _focusNodes[id]?.hasFocus != true ||
+          controller.text == text) {
+        continue;
+      }
+      final stray = typedSince(
+        TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        ),
+        controller.value,
+      );
+      target.value = insertTyped(target.value, stray);
+      controller.text = text;
+    }
   }
 
   /// 다른 블록 칸으로 옮겨 갈 때, 벗어난 칸의 확정하지 않은 글을 저장한다.
@@ -639,7 +800,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             .whereType<Map>()
             .toList();
         if (_markdown != before) await _saveRecording(before);
-      });
+      }, editing: true);
       return;
     }
   }
@@ -825,17 +986,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     KeyEvent event,
   ) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
-    if (_busy) {
-      if (event is KeyDownEvent &&
-          event.logicalKey == LogicalKeyboardKey.tab &&
-          _selectedIds.isEmpty &&
-          _queuedIndents.length < 8) {
-        _queuedIndents.add((
-          operation: HardwareKeyboard.instance.isShiftPressed ? 'outdent' : 'indent',
-          block: block['id'],
-          page: _page,
-        ));
-      }
+    if (_busy && (!_editing || _selectedIds.isNotEmpty)) {
       return KeyEventResult.handled;
     }
     final key = event.logicalKey;
@@ -926,6 +1077,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       }
     }
 
+    if (_busy) return _handleBusyKey(id, controller, event, composing);
+
     KeyEventResult run(String operation) {
       _key(operation, block: block);
       return KeyEventResult.handled;
@@ -940,6 +1093,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         _key('commit', block: block).then((_) {
           if (mounted && _blocks.any((b) => b['id'] == id)) _selectBlock(id);
         });
+        _editing = false; // 곧 블록 선택이 되므로 이어 누른 키는 받지 않는다.
       }
       return KeyEventResult.handled;
     }
@@ -989,6 +1143,72 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     return KeyEventResult.ignored;
   }
 
+  /// 편집 명령 처리 중의 키. 글자는 입력 칸에 맡기고 Enter·Tab 은 예약한다.
+  /// 커서를 옮기는 키와 단축키는 친 글의 자리를 알 수 없게 하므로 받지 않는다.
+  KeyEventResult _handleBusyKey(
+    Object? id,
+    TextEditingController controller,
+    KeyEvent event,
+    bool composing,
+  ) {
+    final key = event.logicalKey;
+    final mods = HardwareKeyboard.instance;
+    final ctrl = mods.isControlPressed || mods.isMetaPressed;
+    final alt = mods.isAltPressed;
+    final shift = mods.isShiftPressed;
+    final enter =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter;
+    final tab = key == LogicalKeyboardKey.tab;
+    if (enter || tab) {
+      if (event is KeyDownEvent && !(enter && alt)) {
+        _enqueue(
+          tab
+              ? (shift ? 'outdent' : 'indent')
+              : ctrl
+              ? 'cycle_todo'
+              : (shift ? 'newline' : 'enter'),
+          id,
+        );
+      }
+      return KeyEventResult.handled;
+    }
+    if (composing) return KeyEventResult.ignored; // 나머지는 IME 몫
+    if (key == LogicalKeyboardKey.backspace ||
+        key == LogicalKeyboardKey.delete) {
+      // 처리 중에 친 글 안에서만 지운다. 명령에 보낸 글은 건드리지 않는다.
+      final s = controller.selection;
+      if (ctrl || alt || !s.isValid) return KeyEventResult.handled;
+      final base = _base?.value;
+      if (base == null) return KeyEventResult.ignored;
+      final head = base.selection.isValid
+          ? base.selection.start
+          : base.text.length;
+      final tail = base.selection.isValid
+          ? base.text.length - base.selection.end
+          : 0;
+      final end = controller.text.length - tail;
+      final back = key == LogicalKeyboardKey.backspace;
+      final inside =
+          s.start >= head &&
+          s.end <= end &&
+          (!s.isCollapsed || (back ? s.start > head : s.end < end));
+      return inside ? KeyEventResult.ignored : KeyEventResult.handled;
+    }
+    final blocked =
+        key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.home ||
+        key == LogicalKeyboardKey.end ||
+        key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.pageDown ||
+        ctrl != alt; // AltGr(Ctrl+Alt)은 글자 입력이다.
+    return blocked ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
   /// 저장하고, 성공하면 이번 편집 묶음(직전 마크다운 [before])을 한 단계로 기록한다.
   /// 저장이 거절되면(충돌 등 외부 변경) 이력의 기준이 어긋났으므로 비운다.
   Future<void> _saveRecording(String before) async {
@@ -1017,8 +1237,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     return null;
   }
 
-  void _syncEditorsToBlocks() {
+  void _syncEditorsToBlocks({Object? except}) {
     for (final block in _blocks) {
+      if (except != null && block['id'] == except) continue;
       final controller = _editors[block['id']];
       final text = '${block['text'] ?? ''}';
       if (controller != null && controller.text != text) {
@@ -1041,6 +1262,13 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       return;
     }
     if (undo ? !_history.canUndo : !_history.canRedo) return;
+    final focused = _blocks
+        .where((b) => _focusNodes[b['id']]?.hasFocus ?? false)
+        .firstOrNull;
+    final controller = _editors[focused?['id']];
+    final typed = controller == null
+        ? null
+        : (id: focused!['id'] as Object?, value: controller.value);
     await _run(() async {
       try {
         final target = undo ? _history.undo(_markdown) : _history.redo(_markdown);
@@ -1052,13 +1280,18 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         });
         _markdown = target;
         _blocks = (parsed['blocks'] as List? ?? []).whereType<Map>().toList();
-        _syncEditorsToBlocks();
+        if (mounted && typed != null) {
+          _placeCursor(null);
+          setState(() {});
+        } else {
+          _syncEditorsToBlocks();
+        }
         await _save();
       } catch (_) {
         _history.clear();
         rethrow;
       }
-    });
+    }, editing: true, typed: typed);
   }
 
   Future<void> _save() async {
@@ -1108,11 +1341,11 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       ];
       await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
-    });
+    }, editing: true);
   }
 
   Future<void> _searchBlocks(String query) async {
-    if (query.trim().runes.length < 2 || _page == null) return;
+    if (query.trim().runes.length < 2 || _page == null || _busy) return;
     await _run(() async {
       final result = await _call({
         'action': 'search',
@@ -1379,7 +1612,10 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                     });
                                     return node;
                                   });
+                                  // 처리 중에 친 글·곧 커서가 올 칸은 덮지 않는다.
                                   if (!focus.hasFocus &&
+                                      id != _pendingFocus &&
+                                      !(_busy && id == _base?.id) &&
                                       controller.text !=
                                           '${block['text'] ?? ''}') {
                                     controller.text = '${block['text'] ?? ''}';
@@ -1391,24 +1627,33 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       focus,
                                       event,
                                     ),
-                                    child: TextField(
-                                      key: ValueKey('outliner-block-$id'),
-                                      controller: controller,
-                                      focusNode: focus,
-                                      maxLines: null,
-                                      keyboardType: TextInputType.multiline,
-                                      readOnly: _selectedIds.isNotEmpty,
-                                      inputFormatters: [_pairFormatter],
-                                      onTap: () {
-                                        if (_selectedIds.isNotEmpty) {
-                                          _clearSelection();
-                                        }
-                                      },
-                                      onChanged: (_) =>
-                                          _updatePopup(id, controller),
-                                      decoration: const InputDecoration(
-                                        border: InputBorder.none,
-                                        isDense: true,
+                                    // 처리 중의 클릭은 커서를 옮겨 친 글의 자리를 흐트러뜨린다.
+                                    // 무시한 클릭이 '칸 바깥 클릭'이 되어 포커스가 풀리지 않게 영역은 남긴다.
+                                    child: TapRegion(
+                                      groupId: EditableText,
+                                      behavior: HitTestBehavior.opaque,
+                                      child: IgnorePointer(
+                                        ignoring: _busy,
+                                        child: TextField(
+                                          key: ValueKey('outliner-block-$id'),
+                                          controller: controller,
+                                          focusNode: focus,
+                                          maxLines: null,
+                                          keyboardType: TextInputType.multiline,
+                                          readOnly: _selectedIds.isNotEmpty,
+                                          inputFormatters: [_pairFormatter],
+                                          onTap: () {
+                                            if (_selectedIds.isNotEmpty) {
+                                              _clearSelection();
+                                            }
+                                          },
+                                          onChanged: (_) =>
+                                              _updatePopup(id, controller),
+                                          decoration: const InputDecoration(
+                                            border: InputBorder.none,
+                                            isDense: true,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   );
