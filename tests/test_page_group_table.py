@@ -170,6 +170,11 @@ class MidtitlePageTests(unittest.TestCase):
         hwp.GetPos.return_value = (0, 1, 0)
         mover = Mock(return_value=move)
         breaker = Mock(return_value=page_break)
+
+        def set_break(pos, on):
+            breaks.append((pos, on))
+            hwp.HParameterSet.HParaShape.PagebreakBefore = int(on)    # 원복 확인이 다시 읽는 값
+
         with patch.dict(fn.__globals__, {
             'hwp': hwp, 'hwp_run': Mock(), '로그': Mock(), '검수_문제_기록': Mock(), '현재_처리파일': '',
             '쪽범위_사용중': lambda: False, '세트문장_통계': stats,
@@ -177,7 +182,7 @@ class MidtitlePageTests(unittest.TestCase):
             '중제목_묶음_쪽': lambda mid, paras: measures.pop(0) if len(measures) > 1 else measures[0],
             '_묶음_같은쪽_이동': mover, '_묶음_쪽나눔_이동': breaker,
             '쪽나눔_켜짐': lambda pos: next_break,
-            '쪽나눔_설정': lambda pos, on: breaks.append((pos, on)),
+            '쪽나눔_설정': set_break,
         }):
             moved = fn({'위치': (0, 10, 0), '표키': (0, 10, 0), '다음': (0, 11, 0), '요약': '□ 추진 계획'})
         return moved, mover, breaker, breaks, stats

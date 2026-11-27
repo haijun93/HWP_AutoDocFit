@@ -2440,6 +2440,8 @@ _괄호따옴표_시작문자인가 = _engine_resolve('docfit_engine.spacing', '
 쪽나누기_사용 = True
 # 쪽 배치가 묶음을 옮기려고 넣은 쪽 나눔의 본문 문단 번호(저장 직전 해제에서 남긴다).
 쪽배치_쪽나눔문단 = set()
+# 문단 배치 중 강제로 새 쪽을 시작하는 본문 문단 번호(None=아직 조사 전). 쪽나눔_설정이 함께 고친다.
+배치_강제쪽나눔 = None
 
 
 문서_쪽나누기_전체해제 = _engine_resolve('docfit_engine.page_fit', '문서_쪽나누기_전체해제', globals())
@@ -2450,6 +2452,8 @@ _쪽나눔_원복 = _engine_resolve('docfit_engine.page_fit', '_쪽나눔_원복
 
 
 _묶음_쪽나눔_이동 = _engine_resolve('docfit_engine.page_fit', '_묶음_쪽나눔_이동', globals())
+_배치_강제쪽나눔_조사 = _engine_resolve('docfit_engine.page_fit', '_배치_강제쪽나눔_조사', globals())
+_쪽나눔앞_넘침_확인 = _engine_resolve('docfit_engine.page_fit', '_쪽나눔앞_넘침_확인', globals())
 
 
 보고서_압축조건 = _engine_resolve('docfit_engine.page_fit', '보고서_압축조건', globals())
