@@ -4,12 +4,18 @@ import time
 import unittest
 from pathlib import Path
 
+import tests  # noqa: F401 - `discover -p` 로 이 모듈만 골라 돌려도 설치된 색인 서비스·사용자 데이터를 읽지 않게 격리한다.
 from docfit_app.doc_grid_service import DocGridService
 from docfit_app.photo_album_service import PhotoAlbumService
 from docfit_app.settings_service import SettingsService
+from tests.klib_support import warm_up_klib
 
 
 class LibraryExclusionSettingsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        warm_up_klib()
+
     def wait_for_scan(self, service):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:

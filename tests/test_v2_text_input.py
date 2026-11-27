@@ -2,7 +2,7 @@
 import unittest
 from unittest import mock
 
-from test_desktop_browser_api import _FakeGui, _Var, _bridge
+from tests.test_desktop_browser_api import _FakeGui, _Var, _bridge
 
 
 class TextInputRoutingTest(unittest.TestCase):
