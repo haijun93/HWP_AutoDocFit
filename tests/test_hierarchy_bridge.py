@@ -71,6 +71,14 @@ class CacheTests(unittest.TestCase):
         buffer = ctypes.create_string_buffer(b'{"role_sequence":["title","body"]}')
         dll = Mock()
         dll.hierarchy_analyze_json.return_value = ctypes.addressof(buffer)
+        # Mock.call_count 는 여러 스레드에서 증가분을 잃는다. 해제 호출은 list.append 로 직접 센다.
+        # (제품이 argtypes·restype 을 붙이므로 함수 객체여야 한다.)
+        freed = []
+
+        def free(pointer):
+            freed.append(pointer)
+
+        dll.hierarchy_json_free = free
         with patch.object(hb.ctypes, "CDLL", return_value=dll) as load:
             with ThreadPoolExecutor(max_workers=8) as pool:
                 results = list(pool.map(lambda _: hb.run_library("cache-test.dll", PARAS), range(300)))
@@ -80,7 +88,7 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(load.call_count, 1)
             hb.run_library("cache-other.dll", PARAS)
             self.assertEqual(load.call_count, 2)
-        self.assertEqual(dll.hierarchy_json_free.call_count, 302)
+        self.assertEqual(freed, [ctypes.addressof(buffer)] * 302)
 
     def test_settings_reused_and_changes_apply_on_next_analysis(self):
         from docfit_app.settings_service import SettingsService

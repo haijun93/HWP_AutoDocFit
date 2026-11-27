@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from desktop_web_ui import DesktopWebBridge
-from test_desktop_browser_api import _FakeGui, _bridge
+from tests.test_desktop_browser_api import _FakeGui, _bridge
 
 _ns = runpy.run_path(str(Path(__file__).resolve().parents[1] / "hwp-auto-docfit.py"))
 HwpDocFitApp = _ns["HwpAutoDocFitGUI"]

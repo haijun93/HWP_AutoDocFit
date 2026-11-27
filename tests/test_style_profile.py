@@ -142,7 +142,7 @@ class StyleProfileTest(unittest.TestCase):
 class AmbiguousPreciseTableTest(unittest.TestCase):
     def test_duplicate_candidates_fall_back_without_copying_geometry(self):
         import copy
-        from test_table_style import _header, _grid
+        from tests.test_table_style import _header, _grid
         from defusedxml import ElementTree as ET
         namespace = runpy.run_path(str(Path(__file__).resolve().parents[1] / "hwp-auto-docfit.py"),
                                    run_name="ambiguous_precise_test")

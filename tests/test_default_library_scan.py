@@ -6,12 +6,18 @@ import os
 import threading
 from pathlib import Path
 
+import tests  # noqa: F401 - `discover -p` 로 이 모듈만 골라 돌려도 설치된 색인 서비스·사용자 데이터를 읽지 않게 격리한다.
 from docfit_app.doc_grid_service import DocGridService
 from docfit_app.photo_album_service import PhotoAlbumService
 from docfit_app.rust_scan import scan as rust_scan
+from tests.klib_support import warm_up_klib
 
 
 class DefaultLibraryScanTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        warm_up_klib()
+
     def make_service(self, root: Path) -> DocGridService:
         return DocGridService(thumb_dir=root / "thumb-cache", drive_roots=[root])
 

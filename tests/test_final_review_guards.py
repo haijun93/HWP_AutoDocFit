@@ -18,8 +18,8 @@ from docfit_app.flow_service import FlowService
 from docfit_app.settings_service import SettingsService
 from docfit_core.fidelity.package import PackageSnapshot, copy_exact, write_package
 from docfit_core import kordoc_runtime as kr
-from test_fidelity import make_hwpx
-from test_offline_runtime import make_pack, VERSION
+from tests.test_fidelity import make_hwpx
+from tests.test_offline_runtime import make_pack, VERSION
 
 
 class PublicationTests(unittest.TestCase):
