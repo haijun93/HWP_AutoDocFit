@@ -79,6 +79,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             _알파_일괄서식_문서 = False
             쪽배치_쪽나눔문단.clear()
             한칸표_보호영역 = set()
+            한칸표_처리영역.clear()
             디자인표_보호영역 = set()
             디자인표_확인 = []
             기본표서식_적용됨 = False
