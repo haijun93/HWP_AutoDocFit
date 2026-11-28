@@ -107,7 +107,7 @@ def _pandoc_executable(explicit: str | None = None) -> str:
 def convert_to_pandoc_format(source: str | Path, target: str | Path,
                              pandoc_executable: str | None = None) -> Path:
     """Convert supported sources to DOCX, EPUB, or standalone HTML with Pandoc."""
-    from docfit_core.kordoc_bridge import parse_document
+    from docfit_core.kordoc_bridge import check_pdf_text_result, ocr_available, parse_document
 
     source, target = Path(source), Path(target)
     if source.is_symlink() or not source.is_file() or source.suffix.lower() not in CONVERSION_INPUTS:
@@ -136,7 +136,12 @@ def convert_to_pandoc_format(source: str | Path, target: str | Path,
             parse_document(intermediate, markdown, output_format="markdown")
             input_format, source_arg, resource_path = "markdown", str(markdown), str(temp_dir)
         else:
-            parse_document(source, markdown, output_format="markdown", ocr=source_suffix == ".pdf")
+            # PDF는 글자층이 없는 쪽(스캔)만 내장 OCR이 자동으로 읽는다. OCR이 준비되지 않았을 때 --ocr를 넘기면
+            # 일반 PDF까지 실패하므로, 준비된 경우에만 켜고 결과가 비면 빈 파일 대신 이유를 알린다.
+            use_ocr = source_suffix == ".pdf" and ocr_available()
+            parse_document(source, markdown, output_format="markdown", ocr=use_ocr)
+            if source_suffix == ".pdf" and markdown.is_file():
+                check_pdf_text_result(markdown, ocr_used=use_ocr)
             input_format, source_arg, resource_path = "markdown", str(markdown), str(temp_dir)
         if markdown is not None and not markdown.is_file():
             raise RuntimeError("문서를 읽은 결과가 만들어지지 않았습니다.")

@@ -52,6 +52,34 @@ class KordocUnavailableError(RuntimeError):
     pass
 
 
+PDF_NO_TEXT_MESSAGE = (
+    "PDF에서 글자를 읽지 못했습니다. 글자가 그림으로만 들어 있는 스캔 PDF로 보이며, "
+    "글자 인식(OCR) 엔진이 준비되지 않아 변환하지 않았습니다. "
+    "OCR이 내장된 최신 실행 파일을 사용해 주세요."
+)
+PDF_OCR_EMPTY_MESSAGE = (
+    "PDF의 글자를 인식하지 못했습니다. 스캔 해상도·회전·글자 대비를 확인한 뒤 다시 시도해 주세요."
+)
+
+
+def markdown_is_blank(text: str) -> bool:
+    """변환 결과에 읽을 글자가 사실상 없는지(마크다운 표시·표 선·구분선·공백만 남은 경우 포함)."""
+    import re
+    stripped = re.sub(r"[\s|\-_*#>`~=:.\\/\[\]()!]+", "", text or "")
+    return len(stripped) < 2
+
+
+def check_pdf_text_result(markdown_path: str | Path, *, ocr_used: bool) -> None:
+    """PDF를 읽은 결과가 비어 있으면 빈 파일을 만들지 않고 이유를 알려 준다.
+
+    글자층이 없는 쪽만 OCR이 읽으므로(`--ocr`), 일반 PDF는 그대로 두고 스캔 PDF만 인식 결과에 의존한다.
+    """
+    path = Path(markdown_path)
+    text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+    if markdown_is_blank(text):
+        raise KordocUnavailableError(PDF_OCR_EMPTY_MESSAGE if ocr_used else PDF_NO_TEXT_MESSAGE)
+
+
 def _node_major() -> int | None:
     node = _node_executable()
     if not node:
@@ -460,6 +488,8 @@ def convert_to_hwpx(source: str | Path, target: str | Path, *, preset: str = "�
                        ocr=ocr and source.suffix.lower() in IMAGE_INPUT_EXTENSIONS | {".pdf"})
         if not markdown.is_file():
             raise RuntimeError("문서를 읽은 결과가 만들어지지 않았습니다.")
+        if source.suffix.lower() == ".pdf":
+            check_pdf_text_result(markdown, ocr_used=ocr)
         if source.suffix.lower() in IMAGE_INPUT_EXTENSIONS and not markdown.read_text(encoding="utf-8").strip():
             raise RuntimeError("이미지에서 인식된 글자가 없습니다. 해상도·회전·글자 대비를 확인해 주세요.")
         # 같은 볼륨에 임시 결과를 두어 OneDrive/다른 드라이브에서도 원자적으로

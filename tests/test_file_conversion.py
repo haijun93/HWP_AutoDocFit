@@ -450,3 +450,89 @@ class TxtPlainConversionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PdfAutoOcrTests(unittest.TestCase):
+    """PDF → MD·TXT·DOCX·EPUB·HTML·HWPX: 글자층이 없는 스캔 PDF는 kordoc 내장 OCR로 자동 인식한다."""
+
+    def _convert(self, markdown_text, *, ocr_ready, target_name="scan(MD변경).md"):
+        from docfit_core.kordoc_bridge import KordocUnavailableError  # noqa: F401
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        source = Path(folder.name) / "scan.pdf"
+        source.write_bytes(b"%PDF-original")
+        target = Path(folder.name) / target_name
+        calls = []
+
+        def parse(_source, markdown, **kwargs):
+            calls.append(kwargs)
+            Path(markdown).write_text(markdown_text, encoding="utf-8")
+
+        def run(args, **kwargs):
+            Path(args[args.index("--output") + 1]).write_bytes(b"RESULT")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("docfit_core.kordoc_bridge.parse_document", side_effect=parse), \
+                mock.patch("docfit_core.kordoc_bridge.ocr_available", return_value=ocr_ready), \
+                mock.patch("docfit_core.file_conversion.shutil.which", return_value="pandoc.exe"), \
+                mock.patch("docfit_core.file_conversion.subprocess.run", side_effect=run):
+            try:
+                convert_to_pandoc_format(source, target)
+                error = None
+            except Exception as exc:  # noqa: BLE001 - 시험에서 종류·문구를 확인한다.
+                error = exc
+        return calls, target, source, error
+
+    def test_ocr_is_requested_automatically_when_engine_is_ready(self):
+        for name in ("a(MD변경).md", "a(TXT변경).txt", "a(DOCX변경).docx", "a(EPUB변경).epub", "a(HTML변경).html"):
+            calls, target, source, error = self._convert("# 인식된 제목\n\n본문 글자", ocr_ready=True, target_name=name)
+            self.assertIsNone(error, name)
+            self.assertEqual(calls[0]["ocr"], True, name)
+            self.assertTrue(target.is_file(), name)
+            self.assertEqual(source.read_bytes(), b"%PDF-original")
+
+    def test_text_pdf_still_converts_when_ocr_engine_is_missing(self):
+        calls, target, _source, error = self._convert("# 제목\n\n글자층이 있는 PDF 본문", ocr_ready=False)
+        self.assertIsNone(error)
+        self.assertEqual(calls[0]["ocr"], False)
+        self.assertTrue(target.is_file())
+
+    def test_scanned_pdf_without_ocr_engine_fails_clearly_instead_of_empty_file(self):
+        from docfit_core.kordoc_bridge import PDF_NO_TEXT_MESSAGE, KordocUnavailableError
+        calls, target, _source, error = self._convert("\n\n---\n", ocr_ready=False)
+        self.assertIsInstance(error, KordocUnavailableError)
+        self.assertEqual(str(error), PDF_NO_TEXT_MESSAGE)
+        self.assertFalse(target.exists())
+
+    def test_scanned_pdf_with_ocr_that_finds_nothing_reports_recognition_failure(self):
+        from docfit_core.kordoc_bridge import PDF_OCR_EMPTY_MESSAGE
+        calls, target, _source, error = self._convert("  \n", ocr_ready=True)
+        self.assertEqual(str(error), PDF_OCR_EMPTY_MESSAGE)
+        self.assertFalse(target.exists())
+
+    def test_blank_detection_ignores_markup_and_table_lines(self):
+        from docfit_core.kordoc_bridge import markdown_is_blank
+        self.assertTrue(markdown_is_blank(""))
+        self.assertTrue(markdown_is_blank("\n---\n| | |\n|---|---|\n"))
+        self.assertFalse(markdown_is_blank("제목"))
+        self.assertFalse(markdown_is_blank("| 항목 | 값 |\n|---|---|\n| 가 | 1 |"))
+
+    def test_hwpx_route_uses_ocr_for_scanned_pdf_and_rejects_empty_result(self):
+        from docfit_core.kordoc_bridge import PDF_OCR_EMPTY_MESSAGE, KordocUnavailableError
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "scan.pdf"
+            source.write_bytes(b"%PDF-original")
+            target = Path(folder) / "scan(HWPX변경).hwpx"
+            calls = []
+
+            def parse(_source, markdown, **kwargs):
+                calls.append(kwargs)
+                Path(markdown).write_text("", encoding="utf-8")
+
+            with mock.patch("docfit_core.kordoc_bridge.parse_document", side_effect=parse), \
+                    mock.patch("docfit_core.kordoc_bridge.ocr_available", return_value=True):
+                with self.assertRaises(KordocUnavailableError) as raised:
+                    convert_to_hwpx(source, target)
+            self.assertEqual(calls[0]["ocr"], True)
+            self.assertEqual(str(raised.exception), PDF_OCR_EMPTY_MESSAGE)
+            self.assertFalse(target.exists())
