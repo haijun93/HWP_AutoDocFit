@@ -1136,12 +1136,24 @@ pub fn pipe_names_related(name: &str, query: &str, limit: usize) -> Result<Answe
         groups:groups.into_iter().map(|g|g.query).collect(),..Answer::default() })
 }
 
+/// 파일명 색인을 못 쓰는 이유를 상태별로 알려 준다(`names index unavailable (empty|building|failed…)`).
+fn names_unavailable_message(error: &str) -> String {
+    if error.contains("(building)") {
+        "파일명 색인을 만드는 중입니다. 끝나는 대로 검색됩니다(바탕 화면·문서·다운로드부터 먼저 만듭니다).".to_owned()
+    } else if error.contains("(empty)") {
+        format!("파일명 색인이 아직 없습니다. 색인 프로그램이 시작되면 바탕 화면·문서·다운로드를 자동으로 색인하며, \
+                 전체 드라이브 검색은 설정에서 색인 서비스를 설치해야 합니다.({error})")
+    } else {
+        format!("파일명 색인을 쓸 수 없습니다. 설정에서 '파일명 색인 지금 다시 만들기'를 눌러 보세요.({error})")
+    }
+}
+
 fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if value["ok"] != true {
         let e = value["error"].as_str().unwrap_or("색인 서비스 오류");
         return Err(if e.contains("unavailable") {
-            format!("파일명 색인을 준비하는 중입니다({e}).")
+            names_unavailable_message(e)
         } else {
             e.to_owned()
         });
@@ -1866,6 +1878,14 @@ mod tests {
         assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
         assert_eq!(format_filetime(0), None);
         assert!(pipe_names(r"\\.\pipe\ktm-none-test-pipe", "예산", "size").is_err());
+    }
+
+    #[test]
+    fn names_unavailable_message_explains_each_state() {
+        assert!(names_unavailable_message("names index unavailable (building)").contains("만드는 중"));
+        let empty = names_unavailable_message("names index unavailable (empty)");
+        assert!(empty.contains("자동으로 색인") && empty.contains("(empty)"));
+        assert!(names_unavailable_message("names index unavailable (failed: x)").contains("다시 만들기"));
     }
 
     #[test]

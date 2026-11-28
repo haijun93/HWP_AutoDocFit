@@ -96,7 +96,9 @@ fn user_index() -> Result<PathBuf> {
 fn user_mode(root: PathBuf, name: &str) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_sender, receiver) = tokio::sync::watch::channel(false);
-    runtime.block_on(kfind::pipe::run(name, root, receiver))
+    // 서비스 없이도 파일명 검색이 되도록 바탕 화면·문서·다운로드로 파일명 색인을 스스로 만든다.
+    let auto_roots = kfind::names::default_user_roots_from_env();
+    runtime.block_on(kfind::pipe::run_user(name, root, receiver, auto_roots))
 }
 fn install_task() -> Result<()> {
     let exe = std::env::current_exe()?;

@@ -79,6 +79,44 @@ fn sort_of(s: Option<&str>) -> Result<Sort> {
     Sort::parse(s).ok_or_else(|| format!("unknown sort {s}").into())
 }
 
+/// 서비스 없이 사용자 모드로 돌 때 파일명 색인을 자동으로 만들 기본 폴더(실제로 있는 절대 경로만, 중복 없이).
+/// 사용자 폴더의 바탕 화면·문서·다운로드(한글 이름 포함)와 OneDrive로 옮겨진 같은 폴더들.
+pub fn default_user_roots(
+    home: Option<&std::path::Path>,
+    onedrive: &[std::path::PathBuf],
+) -> Vec<String> {
+    let mut bases: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(h) = home {
+        bases.push(h.to_path_buf());
+    }
+    bases.extend(onedrive.iter().cloned());
+    let mut out: Vec<String> = Vec::new();
+    for base in bases {
+        for name in ["Desktop", "Documents", "Downloads", "바탕 화면", "문서", "다운로드"] {
+            let path = base.join(name);
+            if !path.is_absolute() || !path.is_dir() {
+                continue;
+            }
+            let text = path.to_string_lossy().into_owned();
+            if !out.iter().any(|p| p.eq_ignore_ascii_case(&text)) {
+                out.push(text);
+            }
+        }
+    }
+    out.truncate(64);
+    out
+}
+
+/// 실행 환경(USERPROFILE·OneDrive)에서 기본 폴더 목록을 읽는다.
+pub fn default_user_roots_from_env() -> Vec<String> {
+    let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
+    let onedrive: Vec<std::path::PathBuf> = ["OneDrive", "OneDriveCommercial", "OneDriveConsumer"]
+        .iter()
+        .filter_map(|k| std::env::var_os(k).map(std::path::PathBuf::from))
+        .collect();
+    default_user_roots(home.as_deref(), &onedrive)
+}
+
 impl NamesService {
     pub fn new(mode: &'static str) -> Arc<Self> {
         Arc::new(NamesService {
@@ -770,5 +808,26 @@ mod tests {
         assert!(features.iter().any(|f| f == "names_list"));
         let commands = status["commands"].as_array().expect("commands");
         assert!(commands.iter().any(|c| c == "names_list"));
+    }
+
+    #[test]
+    fn default_user_roots_keep_only_existing_unique_known_folders() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("Desktop")).unwrap();
+        std::fs::create_dir_all(home.path().join("문서")).unwrap();
+        std::fs::create_dir_all(home.path().join("Pictures")).unwrap();
+        let onedrive = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(onedrive.path().join("Documents")).unwrap();
+        std::fs::create_dir_all(onedrive.path().join("Desktop")).unwrap();
+        let roots = default_user_roots(Some(home.path()), &[onedrive.path().to_path_buf(), home.path().to_path_buf()]);
+        let names: Vec<String> = roots
+            .iter()
+            .map(|r| std::path::Path::new(r).file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["Desktop", "문서", "Desktop", "Documents"]);
+        // 같은 경로를 두 번 넘겨도 한 번만, 없는 폴더(Downloads·Pictures)는 빠진다.
+        assert_eq!(roots.len(), 4);
+        assert!(default_user_roots(None, &[]).is_empty());
+        assert!(default_user_roots(Some(std::path::Path::new("relative-home")), &[]).is_empty());
     }
 }

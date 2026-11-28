@@ -935,16 +935,44 @@ pub async fn run_bound(
 }
 /// `mode`(`service`·`user`)는 `status` 응답에 실린다.
 pub async fn run_bound_mode(
+    pipe: NamedPipeServer,
+    name: &str,
+    root: PathBuf,
+    stop: tokio::sync::watch::Receiver<bool>,
+    mode: &'static str,
+) -> Result<()> {
+    run_bound_mode_with(pipe, name, root, stop, mode, Vec::new()).await
+}
+
+/// 사용자 모드(`--user`)로 서버를 돌린다. 서비스 없이도 파일명 검색이 되도록 시작하자마자 `auto_roots`
+/// (바탕 화면·문서·다운로드 등)로 파일명 색인을 스스로 만든다. 비어 있으면 만들지 않는다.
+pub async fn run_user(
+    name: &str,
+    root: PathBuf,
+    stop: tokio::sync::watch::Receiver<bool>,
+    auto_roots: Vec<String>,
+) -> Result<()> {
+    let pipe = create(name, true)?;
+    run_bound_mode_with(pipe, name, root, stop, "user", auto_roots).await
+}
+
+async fn run_bound_mode_with(
     mut pipe: NamedPipeServer,
     name: &str,
     root: PathBuf,
     mut stop: tokio::sync::watch::Receiver<bool>,
     mode: &'static str,
+    auto_roots: Vec<String>,
 ) -> Result<()> {
     let handler = Handler::with_mode(root, mode);
     if mode == "service" {
         // 서비스는 시작하자마자 드라이브 전체 이름 색인을 만든다(그동안 names_query는 상태를 알려 줌).
         if let Err(e) = handler.names().build(None) {
+            handler.note_error(&e.to_string());
+        }
+    } else if mode == "user" && !auto_roots.is_empty() {
+        // 서비스가 없는 PC: 사용자 모드는 폴더 목록을 받아야만 만들므로 기본 폴더로 스스로 시작한다.
+        if let Err(e) = handler.names().build(Some(auto_roots)) {
             handler.note_error(&e.to_string());
         }
     }
