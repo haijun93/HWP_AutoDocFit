@@ -1193,7 +1193,11 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if value["ok"] != true {
         let e = value["error"].as_str().unwrap_or("색인 서비스 오류");
-        return Err(if e.contains("unavailable") {
+        return Err(if e.contains("unavailable (empty)") {
+            format!("파일명 색인을 아직 만들지 않았습니다. 색인 서비스가 설치·실행 중인지 확인해 주세요({e}).")
+        } else if e.contains("unavailable (failed)") {
+            format!("파일명 색인 만들기에 실패했습니다({e}).")
+        } else if e.contains("unavailable") {
             format!("파일명 색인을 준비하는 중입니다({e}).")
         } else {
             e.to_owned()
