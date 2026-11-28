@@ -1000,7 +1000,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   DateTime _sundayStart(DateTime value) =>
       DateTime(value.year, value.month, value.day).subtract(Duration(days: value.weekday % 7));
 
-  IconData _kindIcon(String kind) => switch(kind) {'hwp'=>Icons.description_outlined,'doc'=>Icons.article_outlined,'sheet'=>Icons.table_chart_outlined,'slide'=>Icons.slideshow_outlined,'pdf'=>Icons.picture_as_pdf_outlined,'image'=>Icons.image_outlined,_=>Icons.insert_drive_file_outlined};
+  IconData _kindIcon(String kind) => switch(kind) {'hwp'=>Icons.description_outlined,'doc'=>Icons.article_outlined,'sheet'=>Icons.table_chart_outlined,'slide'=>Icons.slideshow_outlined,'pdf'=>Icons.picture_as_pdf_outlined,'image'=>Icons.image_outlined,'folder'=>Icons.folder_outlined,_=>Icons.insert_drive_file_outlined};
 
   @override
   Widget build(BuildContext context) {

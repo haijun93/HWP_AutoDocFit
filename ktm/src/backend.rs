@@ -70,6 +70,8 @@ pub struct Row {
     pub group_matches: Vec<GroupMatch>,
     pub match_kinds: Vec<crate::tm_state::ResultKind>,
     pub doc_id: u64,
+    /// 파일명 색인의 폴더 항목이면 true(목록에 '폴더' 꼬리표를 보이고, 열기는 그 폴더를 연다).
+    pub is_dir: bool,
     pub path: String,
     pub name: String,
     pub parent: String,
@@ -901,6 +903,7 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         group_matches: Vec::new(),
         match_kinds: Vec::new(),
         doc_id: hit.doc_id,
+        is_dir: false,
         path,
         name,
         parent,
@@ -1185,6 +1188,7 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
             }
             let mtime_i64 = i["mtime"].as_i64().unwrap_or(0);
             Row {
+                is_dir,
                 path,
                 name,
                 parent: dir,
@@ -1996,6 +2000,9 @@ mod tests {
         // kfind pipe.rs query emits result.hits; names_query emits result.items.
         // These are the service's JSON envelopes and field names, decoded by the
         // same functions used by the named-pipe client.
+        let folders = decode_names("{\"ok\":true,\"result\":{\"items\":[{\"name\":\"##공사계약\",\"dir\":\"C:\\\\Users\\\\user\\\\Desktop\",\"is_dir\":true},{\"name\":\"합의각서.pdf\",\"dir\":\"C:\\\\Users\\\\user\\\\Desktop\",\"is_dir\":false}]}}".as_bytes()).unwrap();
+        assert!(folders[0].is_dir && !folders[1].is_dir);
+        assert_eq!(folders[0].path, "C:\\Users\\user\\Desktop\\##공사계약");
         let names = decode_names(r#"{"ok":true,"result":{"items":[{"name":"예산안.hwp","dir":"C:\\문서","is_dir":false,"size":2048,"mtime":0}]}}"#.as_bytes()).unwrap();
         let hierarchy = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"C:\\문서\\예산안.hwp","level":1,"count":1,"date":0,"sentences":[]}]}}"#.as_bytes()).unwrap();
         let body = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"c:/문서/예산안.hwp","level":8,"count":2,"date":0,"sentences":[{"ord":1,"para":3,"level":8,"adjacent":false}]}]}}"#.as_bytes()).unwrap();

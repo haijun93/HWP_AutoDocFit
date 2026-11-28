@@ -2334,8 +2334,15 @@ class ContentSearchIndex:
                             "score": score, "relevance_rank": offset + len(results) + 1})
         return results
 
-    def search_files(self, query, *, roots=None, limit=500, start=None, end=None, related_groups=False):
-        """Immediate in-memory filename cache populated from indexed metadata."""
+    FOLDER_RESULT_LIMIT = 50
+
+    def search_files(self, query, *, roots=None, limit=500, start=None, end=None, related_groups=False,
+                    include_folders=True):
+        """Immediate in-memory filename cache populated from indexed metadata.
+
+        include_folders: 이름에 검색어가 든 폴더(색인된 문서가 들어 있는 폴더, 조사 폴더 안)도 결과 맨 앞에 최대
+        FOLDER_RESULT_LIMIT개 넣는다(`is_dir`=True, 수정 시각은 안에 든 문서 중 가장 최근 것).
+        """
         if related_groups:
             from .related_search import search_related
             return search_related(self, query, roots=roots, limit=limit, start=start, end=end, filenames=True)
@@ -2347,7 +2354,7 @@ class ContentSearchIndex:
             stamp = self._keyword_rank_stamp()
             cached = self._file_search_cache
             if cached is not None and cached[0] == stamp:
-                entries = cached[1]
+                entries, folders_all = cached[1], cached[2]
             else:
                 rows = self.db.execute(
                     "SELECT path,name,size,mtime,extension FROM content_meta ORDER BY name COLLATE NOCASE"
@@ -2368,8 +2375,28 @@ class ContentSearchIndex:
                         "mtime": row["mtime"],
                         "extension": row["extension"] or Path(path).suffix.lower().lstrip("."),
                     })
-                self._file_search_cache = (stamp, entries)
+                folders_all = self._folder_entries(entries)
+                self._file_search_cache = (stamp, entries, folders_all)
+            folders = folders_all if include_folders else []
             out = []
+            folder_hits = []
+            for folder in folders:
+                if start is not None and (folder["mtime"] is None or folder["mtime"] < start):
+                    continue
+                if end is not None and (folder["mtime"] is None or folder["mtime"] >= end):
+                    continue
+                if not all(word in folder["name_folded"] for word in words):
+                    continue
+                if allowed is None or any(
+                    folder["drive"] == os.path.splitdrive(root)[0].casefold()
+                    and path_is_within(folder["norm_path"], root)
+                    for root in allowed
+                ):
+                    folder_hits.append({"path": folder["path"], "name": folder["name"], "size": None,
+                                        "mtime": folder["mtime"], "extension": "", "is_dir": True, "kind": "folder"})
+                    if len(folder_hits) >= min(self.FOLDER_RESULT_LIMIT, limit):
+                        break
+            out.extend(folder_hits)
             for entry in entries:
                 if start is not None and (entry["mtime"] is None or entry["mtime"] < start):
                     continue
@@ -2386,6 +2413,30 @@ class ContentSearchIndex:
                     if len(out) >= limit:
                         break
         return out
+
+    @staticmethod
+    def _folder_entries(entries):
+        """색인된 문서 경로에서 폴더 목록을 만든다(문서가 든 폴더와 그 위쪽 폴더, 드라이브 뿌리 제외).
+
+        폴더의 수정 시각은 그 아래 문서 중 가장 최근 것이다.
+        """
+        found = {}
+        for entry in entries:
+            parent = os.path.dirname(entry["path"])
+            while parent and parent != os.path.dirname(parent):
+                key = os.path.normcase(parent)
+                item = found.get(key)
+                mtime = entry["mtime"]
+                if item is None:
+                    name = _nfc(os.path.basename(parent))
+                    if not name or excluded_name(name):
+                        break
+                    found[key] = {"path": parent, "norm_path": key, "name": name, "name_folded": name.casefold(),
+                                  "drive": os.path.splitdrive(parent)[0].casefold(), "mtime": mtime}
+                elif mtime is not None and (item["mtime"] is None or mtime > item["mtime"]):
+                    item["mtime"] = mtime
+                parent = os.path.dirname(parent)
+        return sorted(found.values(), key=lambda f: f["name_folded"])
 
     def errors(self, roots=None):
         with self._lock:
