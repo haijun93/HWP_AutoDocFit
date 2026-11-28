@@ -11,9 +11,26 @@ import 'outliner_typeahead.dart';
 import 'outliner_typing.dart';
 
 class OutlinerWorkspace extends StatefulWidget {
-  const OutlinerWorkspace({super.key, required this.api, this.recentPagesStore});
+  const OutlinerWorkspace({
+    super.key,
+    required this.api,
+    this.recentPagesStore,
+    this.panelStore,
+    this.headerActions = const [],
+    this.notice = '',
+  });
   final ApiCall api;
   final RecentPagesStore? recentPagesStore;
+
+  /// 접은 패널을 기억하는 곳. 없으면 모두 펼친 채 시작하고 기억하지 않는다
+  /// (앱에서는 `OutlinerUiGate` 가 파일 저장소를 넣는다).
+  final OutlinerPanelStore? panelStore;
+
+  /// 제목 줄 오른쪽 끝에 덧붙이는 단추.
+  final List<Widget> headerActions;
+
+  /// 제목 줄 아래에 보일 바깥(문지기)의 안내 문구.
+  final String notice;
 
   @override
   State<OutlinerWorkspace> createState() => _OutlinerWorkspaceState();
@@ -46,7 +63,70 @@ class FileRecentPagesStore implements RecentPagesStore {
   }
 }
 
+/// 아웃라이너 데이터 폴더(최근 페이지·접은 패널 파일).
+Future<Directory> outlinerDataDirectory() async {
+  final base =
+      Platform.environment['LOCALAPPDATA'] ?? Platform.environment['APPDATA'];
+  if (base == null || base.isEmpty) {
+    throw const FileSystemException('사용자 데이터 폴더를 찾을 수 없습니다.');
+  }
+  return Directory('$base${Platform.pathSeparator}HwpAutoDocFit');
+}
+
+const outlinerPanelKeys = {'left', 'right', 'backlinks', 'blockRefs'};
+
+/// 접은 상태. 키는 [outlinerPanelKeys], 값 true = 접음. 사용자가 누른 적 없는 키는 없다.
+abstract interface class OutlinerPanelStore {
+  Future<Map<String, bool>> load();
+  Future<void> save(Map<String, bool> collapsed);
+}
+
+class FileOutlinerPanelStore implements OutlinerPanelStore {
+  FileOutlinerPanelStore(this.directoryProvider);
+  final Future<Directory> Function() directoryProvider;
+
+  Future<File> _file() async => File(
+    '${(await directoryProvider()).path}${Platform.pathSeparator}outliner_panels.json',
+  );
+
+  @override
+  Future<Map<String, bool>> load() async {
+    final decoded = jsonDecode(await (await _file()).readAsString());
+    return {
+      if (decoded is Map)
+        for (final key in outlinerPanelKeys)
+          if (decoded[key] is bool) key: decoded[key] as bool,
+    };
+  }
+
+  @override
+  Future<void> save(Map<String, bool> collapsed) async {
+    final file = await _file();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode(collapsed));
+  }
+}
+
+const _leftWidth = 248.0;
+const _rightWidth = 220.0;
+const _stripWidth = 36.0;
+const _minBodyWidth = 420.0;
+const _minRowForIndentButtons = 250.0;
+
+/// 이 안의 단추를 눌러도 편집 중인 칸의 포커스·커서·확정 전 글이 그대로이게 한다.
+/// (칸 바깥 클릭으로 치지 않고, 단추가 포커스를 가져가지도 않는다.)
+Widget keepEditorFocus(Widget child) =>
+    TextFieldTapRegion(child: ExcludeFocus(child: child));
+
 class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
+  // 패널 접힘. 한 키의 상태 = 사용자가 누른 값(_panels, 저장됨) → 없으면 처음 값.
+  // 처음 값은 펼침. 오른쪽만, 본문이 좁으면 접음(저장하지 않는다). 저장 값을 읽기 전에는
+  // 지금 폭으로 따지고, 읽은 뒤 첫 그리기에서 한 번 정해(_narrowStart) 창 크기를 따라 바뀌지 않는다.
+  final Map<String, bool> _panels = {};
+  bool _panelsRead = false;
+  bool? _narrowStart;
+  Future<void> _panelsLoaded = Future.value();
+  Future<void> _panelsSaved = Future.value();
   List<Map> _pages = [];
   List<String> _recentPages = [];
   bool _recentLoaded = false;
@@ -101,7 +181,49 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   @override
   void initState() {
     super.initState();
+    _panelsLoaded = _loadPanels();
     _refreshPages();
+  }
+
+  Future<void> _loadPanels() async {
+    final store = widget.panelStore;
+    if (store == null) return;
+    var stored = const <String, bool>{};
+    try {
+      stored = await store.load();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      // 읽는 동안 사용자가 누른 값이 먼저다.
+      for (final MapEntry(:key, :value) in stored.entries) {
+        _panels.putIfAbsent(key, () => value);
+      }
+      _panelsRead = true;
+    });
+  }
+
+  bool _collapsed(String key) => _panels[key] ?? false;
+
+  void _setCollapsed(String key, bool value) {
+    setState(() => _panels[key] = value);
+    final store = widget.panelStore;
+    if (store == null) return;
+    // 다 읽은 뒤에 차례로 쓴다(저장해 둔 다른 키를 지우거나 겹쳐 쓰지 않게).
+    _panelsSaved = _panelsSaved.then((_) async {
+      await _panelsLoaded;
+      try {
+        await store.save(Map.of(_panels));
+      } catch (_) {}
+    });
+  }
+
+  bool _rightCollapsed(double width) {
+    final chosen = _panels['right'];
+    if (chosen != null) return chosen;
+    if (widget.panelStore == null) return false;
+    final left = _collapsed('left') ? _stripWidth : _leftWidth;
+    final narrow = width - left - _rightWidth - 2 < _minBodyWidth;
+    return _panelsRead ? _narrowStart ??= narrow : narrow;
   }
 
   @override
@@ -155,18 +277,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     }
   }
 
-  Future<Directory> _defaultDataDirectory() async {
-    final base = Platform.environment['LOCALAPPDATA'] ??
-        Platform.environment['APPDATA'];
-    if (base == null || base.isEmpty) {
-      throw const FileSystemException('사용자 데이터 폴더를 찾을 수 없습니다.');
-    }
-    return Directory('$base${Platform.pathSeparator}HwpAutoDocFit');
-  }
-
   Future<List<String>> _loadRecentPages(Set<String> available, Object? fallback) async {
     try {
-      final store = widget.recentPagesStore ?? FileRecentPagesStore(_defaultDataDirectory);
+      final store = widget.recentPagesStore ?? FileRecentPagesStore(outlinerDataDirectory);
       final stored = await store.load();
       final recent = stored.where(available.contains).toSet().take(20).toList();
       if (recent.isNotEmpty) return recent;
@@ -178,7 +291,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   Future<void> _saveRecentPages() async {
     try {
-      final store = widget.recentPagesStore ?? FileRecentPagesStore(_defaultDataDirectory);
+      final store = widget.recentPagesStore ?? FileRecentPagesStore(outlinerDataDirectory);
       await store.save(_recentPages.take(20).toList());
     } catch (_) {}
   }
@@ -1361,30 +1474,160 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (_, size) => _buildPanels(size.maxWidth));
+
+  /// 패널 전체를 접고 펴는 단추. [open] 은 펼 때의 화살표 방향.
+  Widget _panelToggle(String key, String name, bool collapsed, bool right) =>
+      keepEditorFocus(
+        IconButton(
+          key: ValueKey('outliner-$key-toggle'),
+          tooltip: collapsed ? '$name 패널 펴기' : '$name 패널 접기',
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          onPressed: () => _setCollapsed(key, !collapsed),
+          icon: Icon(
+            collapsed == right ? Icons.chevron_left : Icons.chevron_right,
+          ),
+        ),
+      );
+
+  /// 접은 패널의 좁은 세로 띠.
+  Widget _strip(Widget toggle) => Align(
+    alignment: Alignment.topCenter,
+    child: Padding(padding: const EdgeInsets.only(top: 12), child: toggle),
+  );
+
+  /// 제목 줄. 좁으면 단추를 제목 아래 줄로 내려 넘치지 않게 한다.
+  Widget _header(AppColors c) {
+    final title = Text(
+      _page ?? '아웃라이너',
+      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+        color: c.ink,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+    final actions = <Widget>[
+      const Tooltip(
+        message:
+            '새 블록 Enter(빈 블록은 내어쓰기) · 줄바꿈 Shift+Enter · 들여/내어쓰기 Tab/Shift+Tab\n'
+            '블록 선택 Esc·Alt+↑/↓ · 범위 Shift+↑/↓ · 이동 Alt+Shift+↑/↓\n'
+            '접기/펼치기 Ctrl+↑/↓·Ctrl+; · TODO Ctrl+Enter · 한 블록에 붙여넣기 Ctrl+Shift+V',
+        child: Icon(Icons.keyboard_outlined, size: 18),
+      ),
+      // 단추가 포커스를 가져가면 입력 중이던 칸이 확정 전 글을 잃으므로 포커스를 받지 않게 한다.
+      ExcludeFocus(
+        child: IconButton(
+          key: const ValueKey('outliner-undo'),
+          tooltip: '실행 취소 (Ctrl+Z)',
+          onPressed:
+              _page == null ||
+                  _busy ||
+                  !(_history.canUndo || _pendingBlock() != null)
+              ? null
+              : () => _stepHistory(undo: true),
+          icon: const Icon(Icons.undo),
+        ),
+      ),
+      ExcludeFocus(
+        child: IconButton(
+          key: const ValueKey('outliner-redo'),
+          tooltip: '다시 실행 (Ctrl+Y)',
+          onPressed:
+              _page == null ||
+                  _busy ||
+                  !_history.canRedo ||
+                  _pendingBlock() != null
+              ? null
+              : () => _stepHistory(undo: false),
+          icon: const Icon(Icons.redo),
+        ),
+      ),
+      IconButton(
+        tooltip: '이름 바꾸기',
+        onPressed: _page == null || _busy ? null : _renamePage,
+        icon: const Icon(Icons.drive_file_rename_outline),
+      ),
+      IconButton(
+        tooltip: '페이지 삭제',
+        onPressed: _page == null || _busy ? null : _deletePage,
+        icon: const Icon(Icons.delete_outline),
+      ),
+      IconButton(
+        tooltip: '새 블록',
+        onPressed: _blocks.isEmpty || _busy
+            ? null
+            : () => _edit(_blocks.last, 'insert', ''),
+        icon: const Icon(Icons.add),
+      ),
+      ...widget.headerActions,
+    ];
+    return LayoutBuilder(
+      builder: (_, size) => size.maxWidth < 460
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                title,
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: actions,
+                ),
+              ],
+            )
+          : Row(children: [Expanded(child: title), ...actions]),
+    );
+  }
+
+  Widget _buildPanels(double width) {
     final c = context.colors;
     final highlighted = _highlighted();
     final candidates = _candidates();
+    final leftCollapsed = _collapsed('left');
+    final rightCollapsed = _rightCollapsed(width);
+    // 블록 줄이 쓸 수 있는 폭(들여쓰기 전): 본문 폭에서 목록 좌우 여백을 뺀다.
+    final rowSpace =
+        width -
+        (leftCollapsed ? _stripWidth : _leftWidth) -
+        (rightCollapsed ? _stripWidth : _rightWidth) -
+        2 -
+        48;
     return Row(
       children: [
         SizedBox(
-          width: 248,
+          width: leftCollapsed ? _stripWidth : _leftWidth,
           child: Material(
             color: c.surface,
-            child: Column(
+            child: leftCollapsed
+                ? _strip(_panelToggle('left', '왼쪽', true, false))
+                : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: TextField(
-                    controller: _search,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: '페이지·블록 검색',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _pageQuery = value.trim().toLowerCase()),
-                    onSubmitted: _searchBlocks,
+                  padding: const EdgeInsets.fromLTRB(8, 12, 2, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _search,
+                          decoration: const InputDecoration(
+                            prefixIcon: Icon(Icons.search, size: 20),
+                            // 접기 단추 자리만큼 좁아진 칸에도 안내 문구가 다 보이게 한다.
+                            prefixIconConstraints: BoxConstraints(minWidth: 32),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 14,
+                            ),
+                            hintText: '페이지·블록 검색',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) => setState(
+                            () => _pageQuery = value.trim().toLowerCase(),
+                          ),
+                          onSubmitted: _searchBlocks,
+                        ),
+                      ),
+                      _panelToggle('left', '왼쪽', false, false),
+                    ],
                   ),
                 ),
                 ListTile(
@@ -1443,6 +1686,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         ),
         VerticalDivider(width: 1, color: c.line),
         Expanded(
+          key: const ValueKey('outliner-body'),
           // 입력 칸에 포커스가 없을 때(단추 등)의 Ctrl+Z/Ctrl+Y. 칸에 포커스가 있으면 칸의 처리가 먼저다.
           child: Focus(
             canRequestFocus: false,
@@ -1470,73 +1714,18 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 16, 24, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _page ?? '아웃라이너',
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(
-                              color: c.ink,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                    ),
-                    const Tooltip(
-                      message:
-                          '새 블록 Enter(빈 블록은 내어쓰기) · 줄바꿈 Shift+Enter · 들여/내어쓰기 Tab/Shift+Tab\n'
-                          '블록 선택 Esc·Alt+↑/↓ · 범위 Shift+↑/↓ · 이동 Alt+Shift+↑/↓\n'
-                          '접기/펼치기 Ctrl+↑/↓·Ctrl+; · TODO Ctrl+Enter · 한 블록에 붙여넣기 Ctrl+Shift+V',
-                      child: Icon(Icons.keyboard_outlined, size: 18),
-                    ),
-                    // 단추가 포커스를 가져가면 입력 중이던 칸이 확정 전 글을 잃으므로 포커스를 받지 않게 한다.
-                    ExcludeFocus(
-                      child: IconButton(
-                      key: const ValueKey('outliner-undo'),
-                      tooltip: '실행 취소 (Ctrl+Z)',
-                      onPressed:
-                          _page == null ||
-                              _busy ||
-                              !(_history.canUndo || _pendingBlock() != null)
-                          ? null
-                          : () => _stepHistory(undo: true),
-                      icon: const Icon(Icons.undo),
-                    ),
-                    ),
-                    ExcludeFocus(
-                      child: IconButton(
-                      key: const ValueKey('outliner-redo'),
-                      tooltip: '다시 실행 (Ctrl+Y)',
-                      onPressed:
-                          _page == null ||
-                              _busy ||
-                              !_history.canRedo ||
-                              _pendingBlock() != null
-                          ? null
-                          : () => _stepHistory(undo: false),
-                      icon: const Icon(Icons.redo),
-                    ),
-                    ),
-                    IconButton(
-                      tooltip: '이름 바꾸기',
-                      onPressed: _page == null || _busy ? null : _renamePage,
-                      icon: const Icon(Icons.drive_file_rename_outline),
-                    ),
-                    IconButton(
-                      tooltip: '페이지 삭제',
-                      onPressed: _page == null || _busy ? null : _deletePage,
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                    IconButton(
-                      tooltip: '새 블록',
-                      onPressed: _blocks.isEmpty || _busy
-                          ? null
-                          : () => _edit(_blocks.last, 'insert', ''),
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
+                child: _header(c),
               ),
+              if (widget.notice.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    widget.notice,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               if (_selectedIds.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -1681,6 +1870,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                 size: 18,
                               ),
                             ),
+                            // 아주 좁은 줄에서는 글 칸을 남긴다(Tab·Shift+Tab 은 그대로).
+                            if (rowSpace - (block['indent'] as int? ?? 0) * 24 >=
+                                _minRowForIndentButtons) ...[
                             IconButton(
                               tooltip: '들여쓰기',
                               onPressed: _busy
@@ -1698,6 +1890,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                 size: 18,
                               ),
                             ),
+                            ],
                           ],
                           ),
                         ),
@@ -1744,14 +1937,36 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           ),
           ),
         ),
+        VerticalDivider(width: 1, color: c.line),
         SizedBox(
-          width: 220,
-          child: _BacklinksPanel(
-            api: widget.api,
-            page: _page,
-            markdown: _markdown,
-            selectedBlockId: _selectedIds.firstOrNull,
-            onOpen: (name) => _open(name),
+          width: rightCollapsed ? _stripWidth : _rightWidth,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 접어도 트리에 남긴다. 조회 시점은 펼쳤을 때와 같고, 펴면 바로 보인다.
+              Offstage(
+                offstage: rightCollapsed,
+                // 띠 폭으로 눌러 배치하면 넘치므로 숨긴 동안에도 원래 폭으로 둔다.
+                child: OverflowBox(
+                  alignment: Alignment.topLeft,
+                  minWidth: _rightWidth,
+                  maxWidth: _rightWidth,
+                  child: _BacklinksPanel(
+                    api: widget.api,
+                    page: _page,
+                    markdown: _markdown,
+                    selectedBlockId: _selectedIds.firstOrNull,
+                    onOpen: (name) => _open(name),
+                    toggle: _panelToggle('right', '오른쪽', false, true),
+                    backlinksCollapsed: _collapsed('backlinks'),
+                    blockRefsCollapsed: _collapsed('blockRefs'),
+                    onCollapsed: _setCollapsed,
+                  ),
+                ),
+              ),
+              if (rightCollapsed)
+                _strip(_panelToggle('right', '오른쪽', true, true)),
+            ],
           ),
         ),
       ],
@@ -1766,12 +1981,20 @@ class _BacklinksPanel extends StatefulWidget {
     required this.markdown,
     this.selectedBlockId,
     required this.onOpen,
+    required this.toggle,
+    required this.backlinksCollapsed,
+    required this.blockRefsCollapsed,
+    required this.onCollapsed,
   });
   final ApiCall api;
   final String? page;
   final String markdown;
   final Object? selectedBlockId;
   final ValueChanged<String> onOpen;
+  final Widget toggle; // 패널 전체 접기 단추
+  final bool backlinksCollapsed;
+  final bool blockRefsCollapsed;
+  final void Function(String key, bool collapsed) onCollapsed;
   @override
   State<_BacklinksPanel> createState() => _BacklinksPanelState();
 }
@@ -1779,6 +2002,9 @@ class _BacklinksPanel extends StatefulWidget {
 class _BacklinksPanelState extends State<_BacklinksPanel> {
   List<dynamic> _ids = [];
   List<dynamic> _blockRefIds = [];
+  // 위 목록을 읽어 온 대상. 그 대상을 실제로 읽었을 때만 제목에 개수를 보인다.
+  String? _idsPage;
+  Object? _refsBlock;
 
   @override
   void didUpdateWidget(covariant _BacklinksPanel oldWidget) {
@@ -1792,6 +2018,8 @@ class _BacklinksPanelState extends State<_BacklinksPanel> {
 
   Future<void> _load() async {
     if (widget.page == null) return;
+    final page = widget.page;
+    final block = widget.selectedBlockId;
     try {
       final raw = await widget.api('outliner', [
         {
@@ -1803,9 +2031,10 @@ class _BacklinksPanelState extends State<_BacklinksPanel> {
       ]);
       final data = raw is Map ? raw['data'] : null;
       if (mounted) {
-        setState(
-          () => _ids = data is Map ? (data['block_ids'] as List? ?? []) : [],
-        );
+        setState(() {
+          _ids = data is Map ? (data['block_ids'] as List? ?? []) : [];
+          _idsPage = data is Map ? page : null;
+        });
       }
     } catch (_) {}
 
@@ -1821,40 +2050,101 @@ class _BacklinksPanelState extends State<_BacklinksPanel> {
         ]);
         final data = raw is Map ? raw['data'] : null;
         if (mounted) {
-          setState(
-            () => _blockRefIds =
-                data is Map ? (data['backlinks'] as List? ?? []) : [],
-          );
+          setState(() {
+            _blockRefIds =
+                data is Map ? (data['backlinks'] as List? ?? []) : [];
+            _refsBlock = data is Map ? block : null;
+          });
         }
       } catch (_) {}
     } else {
-      if (mounted) setState(() => _blockRefIds = []);
+      if (mounted) {
+        setState(() {
+          _blockRefIds = [];
+          _refsBlock = null;
+        });
+      }
     }
   }
 
+  /// 눌러서 접고 펴는 제목. [count] 는 이미 읽은 값이 있을 때만 준다.
+  Widget _heading(String key, String title, bool collapsed, int? count) {
+    final style = Theme.of(context).textTheme.titleSmall;
+    return keepEditorFocus(
+      InkWell(
+        key: ValueKey('outliner-$key-header'),
+        onTap: () => widget.onCollapsed(key, !collapsed),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(
+                collapsed ? Icons.chevron_right : Icons.expand_more,
+                size: 18,
+              ),
+              Flexible(child: Text(title, style: style)),
+              if (count != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '$count',
+                  key: ValueKey('outliner-$key-count'),
+                  style: style?.copyWith(color: context.colors.muted),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(12),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('역링크', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        if (_ids.isEmpty)
-          const Text('참조가 없습니다.', style: TextStyle(fontSize: 12))
-        else
-          for (final id in _ids) Text('블록 $id', style: const TextStyle(fontSize: 12)),
-        const SizedBox(height: 16),
-        Text('역참조 (선택 블록)', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 6),
-        if (widget.selectedBlockId == null)
-          const Text('선택된 블록이 없습니다.', style: TextStyle(fontSize: 12))
-        else if (_blockRefIds.isEmpty)
-          const Text('이 블록을 참조하는 블록이 없습니다.', style: TextStyle(fontSize: 12))
-        else
-          for (final id in _blockRefIds)
-            Text('블록 $id 에서 참조', style: const TextStyle(fontSize: 12)),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final selected = widget.selectedBlockId;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(alignment: Alignment.centerRight, child: widget.toggle),
+          _heading(
+            'backlinks',
+            '역링크',
+            widget.backlinksCollapsed,
+            widget.page != null && _idsPage == widget.page ? _ids.length : null,
+          ),
+          if (!widget.backlinksCollapsed) ...[
+            const SizedBox(height: 6),
+            if (_ids.isEmpty)
+              const Text('참조가 없습니다.', style: TextStyle(fontSize: 12))
+            else
+              for (final id in _ids)
+                Text('블록 $id', style: const TextStyle(fontSize: 12)),
+          ],
+          const SizedBox(height: 16),
+          _heading(
+            'blockRefs',
+            '역참조 (선택 블록)',
+            widget.blockRefsCollapsed,
+            selected != null && _refsBlock == selected
+                ? _blockRefIds.length
+                : null,
+          ),
+          if (!widget.blockRefsCollapsed) ...[
+            const SizedBox(height: 6),
+            if (selected == null)
+              const Text('선택된 블록이 없습니다.', style: TextStyle(fontSize: 12))
+            else if (_blockRefIds.isEmpty)
+              const Text(
+                '이 블록을 참조하는 블록이 없습니다.',
+                style: TextStyle(fontSize: 12),
+              )
+            else
+              for (final id in _blockRefIds)
+                Text('블록 $id 에서 참조', style: const TextStyle(fontSize: 12)),
+          ],
+        ],
+      ),
+    );
+  }
 }
