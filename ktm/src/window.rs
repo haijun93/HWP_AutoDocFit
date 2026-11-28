@@ -1981,7 +1981,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 );
 
                 // 종류 태그/아이콘
-                let tag = if grid { "" } else { extension_tag(&row.name) };
+                let tag = if grid { "" } else { ktm::layout::row_kind_tag(&row.name, row.is_dir) };
                 SelectObject(mem, u.small_bold);
                 text(
                     tag,
@@ -2016,7 +2016,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let reason_w = if reason_label.is_empty() { 0 } else { scale(h, 66) };
                 // 바둑판 카드에서도 [폴더 열기] 단추 왼쪽에서 끝내 확장자 꼬리표와 겹치지 않게 한다.
                 let badge_right = text_right;
-                let ext = ktm::backend::extension_label(&row.name);
+                let ext = if row.is_dir { "폴더" } else { ktm::backend::extension_label(&row.name) };
                 // 배지 사각형은 글자 높이 기준으로 첫 줄 한가운데에 맞춘다(고배율에서 글자가 아래로 치우치지 않게).
                 let mut badge_ts: SIZE = std::mem::zeroed();
                 let probe = wide("가");

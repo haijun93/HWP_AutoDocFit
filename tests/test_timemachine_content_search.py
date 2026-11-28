@@ -238,6 +238,35 @@ class ContentSearchTests(unittest.TestCase):
         self.assertEqual([r["name"] for r in self.index.search_files("newer", start=new_time)], [newer.name])
         self.assertEqual(self.index.search("periodneedle", start=new_time + 86400), [])
 
+    def test_search_files_also_finds_folder_names(self):
+        project = self.root / "###공사계약" / "(3) 도장공사_관광안내센터 2곳"
+        project.mkdir(parents=True)
+        doc = project / "합의각서.txt"
+        doc.write_text("folder name search body", encoding="utf-8")
+        other = self.root / "기타" / "메모.txt"
+        other.parent.mkdir()
+        other.write_text("other body", encoding="utf-8")
+        self.index.index_file(doc)
+        self.index.index_file(other)
+
+        found = self.index.search_files("도장공사", roots=[str(self.root)])
+        self.assertEqual([(r["name"], r.get("is_dir", False)) for r in found],
+                         [("(3) 도장공사_관광안내센터 2곳", True)])
+        self.assertEqual(found[0]["kind"], "folder")
+        self.assertEqual(os.path.normcase(found[0]["path"]), os.path.normcase(str(project)))
+        self.assertIsNone(found[0]["size"])
+        # 위쪽 폴더도 이름으로 찾고, 폴더가 파일보다 앞에 온다.
+        mixed = self.index.search_files("공사계약 합의각서", roots=[str(self.root)])
+        self.assertEqual(mixed, [])
+        names = [(r["name"], r.get("is_dir", False)) for r in self.index.search_files("공사", roots=[str(self.root)])]
+        self.assertEqual(names, [("###공사계약", True), ("(3) 도장공사_관광안내센터 2곳", True)])
+        # 폴더 검색을 끄면 파일만, 기간 필터는 폴더 안 문서의 최근 수정 시각으로 본다.
+        self.assertEqual(self.index.search_files("공사", roots=[str(self.root)], include_folders=False), [])
+        far_future = os.path.getmtime(doc) + 10 ** 6
+        self.assertEqual(self.index.search_files("공사", roots=[str(self.root)], start=far_future), [])
+        # 조사 폴더 밖 폴더는 나오지 않는다.
+        self.assertEqual(self.index.search_files("공사", roots=[str(self.root / "기타")]), [])
+
     def test_search_files_reuses_cache_and_invalidates_after_index_lifecycle(self):
         first = self.root / "cache alpha.txt"
         first.write_text("first cache body", encoding="utf-8")

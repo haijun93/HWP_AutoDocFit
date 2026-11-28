@@ -615,6 +615,11 @@ pub fn head_button_glyph(b: HeadButton) -> char {
     }
 }
 
+/// 결과 한 줄의 꼬리표: 폴더 항목은 이름에 점이 있어도 '폴더', 파일은 확장자에 따른 꼬리표.
+pub fn row_kind_tag(name: &str, is_dir: bool) -> &'static str {
+    if is_dir { "폴더" } else { extension_tag(name) }
+}
+
 /// 파일명 확장자에 따른 표시 꼬리표.
 pub fn extension_tag(name: &str) -> &'static str {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -873,6 +878,14 @@ mod content_top_tests {
 #[cfg(test)]
 mod quick_search_card_tests {
     use super::*;
+
+    #[test]
+    fn folder_rows_get_folder_tag_even_when_the_name_has_a_dot() {
+        assert_eq!(row_kind_tag("(3) 도장공사_관광안내센터 2곳", true), "폴더");
+        assert_eq!(row_kind_tag("보고서 v1.2", true), "폴더");
+        assert_eq!(row_kind_tag("합의각서.pdf", false), "PDF");
+        assert_eq!(row_kind_tag("메모", false), "문서");
+    }
 
     #[test]
     fn two_line_result_card_fits_painter_lines_at_common_scales() {
@@ -1682,6 +1695,7 @@ mod tests {
             group_matches: Vec::new(),
             match_kinds: Vec::new(),
             doc_id: 0,
+            is_dir: false,
             path: format!("C:\\{name}"),
             name: name.into(),
             parent: "C:\\".into(),
