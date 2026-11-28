@@ -483,13 +483,22 @@ impl Backend {
             }
         }
         rows.sort_by(|a,b|a.level.cmp(&b.level).then_with(||b.count.cmp(&a.count)).then_with(||a.path.to_lowercase().cmp(&b.path.to_lowercase())));
-        rows.truncate(clamp_search_limit(top));
+        if top != 0 { rows.truncate(top); }
         for (i,r) in rows.iter_mut().enumerate() { r.rank=i; }
         Ok(Answer { rows, terms:groups.iter().flat_map(|g|g.terms.clone()).collect(),
             groups:groups.iter().map(|g|g.query.clone()).collect(), ..Answer::default() })
     }
 
     pub fn open(root: &Path) -> Result<Self> {
+        Self::open_mode(root, true)
+    }
+
+    /// 앱 안 통합 검색은 색인 복구·서비스 쓰기를 요청하지 않는다.
+    pub fn open_readonly(root: &Path) -> Result<Self> {
+        Self::open_mode(root, false)
+    }
+
+    fn open_mode(root: &Path, request_rebuild: bool) -> Result<Self> {
         // Index::open treats a missing manifest as empty; the UI needs an explicit
         // unavailable state and must never create the user's index directory.
         if !root.join("MANIFEST.kfm").is_file() {
@@ -498,11 +507,11 @@ impl Backend {
         let index = Index::open(root).map_err(|e| match e {
             kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. } => {
                 // 업데이트 직후 옛 형식 색인: 서비스에 질의 한 번을 보내 즉시 새로 만들게 한다(응답은 쓰지 않음).
-                let _ = pipe_call_with_timeout(
+                if request_rebuild { let _ = pipe_call_with_timeout(
                     PIPE_NAME,
                     &json!({"command":"query","id":1,"text":"색인","top":1}),
                     PIPE_LIGHT_TIMEOUT,
-                );
+                ); }
                 "색인을 새 형식으로 다시 만드는 중입니다. 잠시 뒤 다시 검색해 주세요.".to_string()
             }
             other => other.to_string(),
@@ -699,6 +708,25 @@ impl Backend {
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         skip_cloud_network: bool,
     ) -> Result<Answer> {
+        self.search_complete_or_limit(query, hierarchy, date_range, folder, ext, match_mode,
+            clamp_search_limit(top), cancel, skip_cloud_network)
+    }
+
+    /// UNIFIED2: 후보 절단 없는 요청 전용 전수 응답. 공개 bounded API와 분리한다.
+    pub fn search_snapshot(
+        &mut self, query: &str, hierarchy: bool, date_range: Option<(i64, i64)>,
+        folder: Option<&str>, ext: Option<&str>, match_mode: crate::tm_state::MatchMode,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>, skip_cloud_network: bool,
+    ) -> Result<Answer> {
+        self.search_complete_or_limit(query, hierarchy, date_range, folder, ext, match_mode,
+            0, cancel, skip_cloud_network)
+    }
+
+    fn search_complete_or_limit(
+        &mut self, query: &str, hierarchy: bool, date_range: Option<(i64, i64)>,
+        folder: Option<&str>, ext: Option<&str>, match_mode: crate::tm_state::MatchMode,
+        top: usize, cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>, skip_cloud_network: bool,
+    ) -> Result<Answer> {
         if self.related_queries {
             return self.search_related(query, date_range, folder, ext, top, cancel, skip_cloud_network);
         }
@@ -714,7 +742,7 @@ impl Backend {
         let query_text = query_for_match_mode(query, match_mode);
         let syntax = kfind_core::parse_query_syntax(&query_text);
         let mut opts = SearchOptions {
-            top: clamp_search_limit(top),
+            top,
             refs_per_doc: 1,
             cancel,
             start_date,
@@ -781,8 +809,9 @@ impl Backend {
                     .then_with(|| a.level.cmp(&b.level))
                     .then_with(|| b.count.cmp(&a.count))
                     .then_with(|| b.date.cmp(&a.date))
+                    .then_with(|| if top == 0 { a.doc_id.cmp(&b.doc_id) } else { std::cmp::Ordering::Equal })
             });
-            merged.hits.truncate(top);
+            if top != 0 { merged.hits.truncate(top); }
             merged.total_docs = merged.hits.len();
             merged
         } else if kfind_core::fold(search_text).chars().count() == 1 {
@@ -796,6 +825,9 @@ impl Backend {
                 .search_groups_by(search_text, &opts, order)
                 .map_err(|e| e.to_string())?
         };
+        if top == 0 && result.partial {
+            return Err("본문 전수 조회가 검사 한도에 도달했습니다. 검색 범위를 줄여 주세요.".into());
+        }
         let mut terms: Vec<String> = search_text.split_whitespace().map(str::to_owned).collect();
         for p in &syntax.phrases {
             terms.push(p.clone());
@@ -828,7 +860,7 @@ impl Backend {
         for (i, r) in rows.iter_mut().enumerate() {
             r.rank = i;
         }
-        let n = rows.len().min(SNIPPET_PREFETCH);
+        let n = if top == 0 { 0 } else { rows.len().min(SNIPPET_PREFETCH) };
         self.fill_snippets_with_cloud_policy(&mut rows[..n], &terms, skip_cloud_network);
 
         // SEMI3: 2글자부터 자동완성 후보
@@ -1140,15 +1172,48 @@ pub fn pipe_names_related(name: &str, query: &str, limit: usize) -> Result<Answe
 }
 
 /// 파일명 색인을 못 쓰는 이유를 상태별로 알려 준다(`names index unavailable (empty|building|failed…)`).
+/// 만드는 중일 때만 '준비하는 중'을 쓴다(`notice`가 이 말로 안내 제목을 고른다).
 fn names_unavailable_message(error: &str) -> String {
     if error.contains("(building)") {
-        "파일명 색인을 만드는 중입니다. 끝나는 대로 검색됩니다(바탕 화면·문서·다운로드부터 먼저 만듭니다).".to_owned()
+        "파일명 색인을 만드는 중이라 검색을 준비하는 중입니다. 끝나는 대로 검색됩니다(바탕 화면·문서·다운로드부터 먼저 만듭니다).".to_owned()
     } else if error.contains("(empty)") {
-        format!("파일명 색인이 아직 없습니다. 색인 프로그램이 시작되면 바탕 화면·문서·다운로드를 자동으로 색인하며, \
+        format!("파일명 색인을 아직 만들지 않았습니다. 색인 프로그램이 시작되면 바탕 화면·문서·다운로드를 자동으로 색인하며, \
                  전체 드라이브 검색은 설정에서 색인 서비스를 설치해야 합니다.({error})")
+    } else if error.contains("(failed") {
+        format!("파일명 색인 만들기에 실패했습니다. 설정에서 '파일명 색인 지금 다시 만들기'를 눌러 보세요.({error})")
     } else {
         format!("파일명 색인을 쓸 수 없습니다. 설정에서 '파일명 색인 지금 다시 만들기'를 눌러 보세요.({error})")
     }
+}
+
+/// 새 서비스 명령의 전수 보증을 검증한다. 구 서비스/잘린 응답으로 폴백하지 않는다.
+pub fn pipe_names_snapshot(name: &str, query: &str, sort: &str, related: bool) -> Result<Answer> {
+    let bytes = pipe_call_with_timeout(name,
+        &json!({"command":"names_snapshot","id":1,"text":query,"sort":sort,"related":related}),
+        PIPE_SEARCH_TIMEOUT)?;
+    decode_names_snapshot(&bytes, query, related)
+}
+
+pub fn decode_names_snapshot(bytes: &[u8], query: &str, related: bool) -> Result<Answer> {
+    let mut rows = decode_names(bytes)?;
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if value["result"]["complete"] != true
+        || value["result"]["total"].as_u64() != Some(rows.len() as u64)
+        || (related && value["result"]["related_groups"] != true) {
+        return Err("통합 검색 전수 응답이 필요합니다. 파일명 서비스 기능을 확인해 주세요.".into());
+    }
+    let (terms, groups) = if related {
+        let groups = kfind_core::related_query::parse_related_query(query)?;
+        for row in &mut rows {
+            row.group_matches = groups.iter().enumerate().map(|(i, g)| GroupMatch {
+                group_index: i, query: g.query.clone(), paragraphs: Vec::new(), filename: true,
+            }).collect();
+        }
+        (groups.iter().flat_map(|g| g.terms.clone()).collect(), groups.into_iter().map(|g| g.query).collect())
+    } else {
+        (unified::query_terms(query), kfind_core::split_semicolon_groups(query))
+    };
+    Ok(Answer { rows, terms, groups, ..Answer::default() })
 }
 
 fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {

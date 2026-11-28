@@ -2,6 +2,10 @@
 mod lifecycle;
 mod window;
 fn main() {
+    if std::env::args().any(|a| a == "--search-host") {
+        if ktm::app_host::run().is_err() { std::process::exit(1); }
+        return;
+    }
     if let Err(error) = window::run() {
         if let Some(path) = std::env::var_os("KTM_ERROR_FILE") {
             let _ = std::fs::write(path, &error);

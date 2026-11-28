@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart';
 import 'related_documents_dialog.dart';
 import 'timemachine_api.dart';
 import 'timemachine_thumbnails.dart';
+import 'unified_search.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
 import '../../core/instant_search.dart';
@@ -67,6 +68,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     onError: _searchFailed,
   );
   TextEditingController get _search => _searchBox.text;
+  // 통합 보기(파일명 > 위계 > 본문). 기본은 끔이며, 끄면 기존 3탭 그대로다.
+  bool _unifiedView = false;
+  late final UnifiedSearchController _unified = UnifiedSearchController(_api);
   final Set<String> _selectedKinds = {};
   String _query = '';
   bool _contentMode = false, _contentIndexRunning = false;
@@ -119,7 +123,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   @override
   void initState() { super.initState(); _load(firstOpen: true); _scroll.addListener(_onScroll); _pollDeveloperMode(); }
   @override
-  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _previewFind.dispose(); _customDays.dispose(); super.dispose(); }
+  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _unified.dispose(); _previewFind.dispose(); _customDays.dispose(); super.dispose(); }
 
   void _pollDeveloperMode() {
     _developerModePoll?.cancel();
@@ -336,6 +340,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   /// 검색 컨트롤러가 부르는 실제 검색. 늦게 온 응답은 컨트롤러가 요청 번호로 버린다.
   Future<_ContentSearchOutcome?> _runSearch(InstantSearchRequest request) async {
     final query = request.query;
+    if (request.tab == 'unified') {
+      _query = '';
+      setState(() { _selectedContentResult = null; _preview = null; });
+      unawaited(_unified.start(query, {
+        if (_selectedKinds.isNotEmpty) 'kinds': _selectedKinds.toList(),
+        ..._searchRangePayload,
+      }));
+      return null;
+    }
     if (request.tab == 'file') {
       _query = query;
       unawaited(_filtersChanged());
@@ -385,6 +398,12 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   /// 검색어가 기준 미만이 되면 그 탭의 결과를 비운다(파일명 탭은 기간 전체 타임라인으로 돌아간다).
   void _searchCleared(String tab, String query) {
     if (!mounted) return;
+    if (tab == 'unified') {
+      _query = '';
+      _unified.clear();
+      setState(() { _selectedContentResult = null; _preview = null; });
+      return;
+    }
     if (tab == 'file') {
       _query = '';
       unawaited(_filtersChanged());
@@ -665,6 +684,86 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     _searchBox.selectTab(mode);
   }
 
+  /// 통합 보기 전환. 검색어는 남기고 바뀐 보기에서 곧바로 찾는다.
+  void _applyUnifiedView(bool enabled) {
+    if (enabled == _unifiedView) return;
+    setState(() {
+      _unifiedView = enabled;
+      _contentSearchRevision++;
+      _fileSearchRevision++;
+      _contentMode = false;
+      _relatedMode = false;
+      _contentResults = [];
+      _selectedContentResult = null;
+      _preview = null;
+      _showOperatorHelp = false;
+      _fileSearchResults = [];
+      _fileSearchActive = false;
+      _query = '';
+    });
+    if (!enabled) _unified.close();
+    _searchBox.selectTab(enabled ? 'unified' : 'file');
+  }
+
+  Future<void> _setUnifiedView(bool enabled) async {
+    _applyUnifiedView(enabled);
+    // 기간 타임라인에 남은 이름 거르기를 지운다.
+    unawaited(_filtersChanged());
+    Map<String, Object?> saved;
+    try {
+      saved = await _api.command('unified_view_set', {'enabled': enabled});
+    } catch (_) {
+      saved = {'ok': false};
+    }
+    if (mounted && saved['ok'] != true) {
+      setState(() => _error = '통합 보기 선택을 저장하지 못했습니다. 이번에는 그대로 사용합니다.');
+    }
+  }
+
+  /// 기간·종류·조사 폴더가 바뀌면 통합 검색을 다시 한다.
+  void _refreshUnified() {
+    if (_unifiedView) _searchBox.refresh();
+  }
+
+  TimemachineContentResult _unifiedResult(UnifiedRow row) {
+    final dot = row.name.lastIndexOf('.');
+    return TimemachineContentResult.fromJson({
+      'path': row.path, 'name': row.name, 'snippet': row.snippet,
+      'kind': dot < 0 ? '' : row.name.substring(dot + 1).toLowerCase(),
+    }, query: _search.text.trim());
+  }
+
+  Future<void> _revealPath(String path) async {
+    try {
+      final response = await _api.command('reveal', {'path': path});
+      if (!mounted) return;
+      setState(() => _error = response['ok'] == true ? null : '${response['message'] ?? '폴더를 열지 못했습니다.'}');
+    } catch (_) {
+      if (mounted) setState(() => _error = '폴더를 열지 못했습니다. 앱 연결을 확인해 주세요.');
+    }
+  }
+
+  Widget _unifiedArea() => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(
+        flex: 3,
+        child: UnifiedResultsView(
+          controller: _unified,
+          marked: _markedTerms,
+          selectedPath: _selectedContentResult?.path,
+          onPreview: (row) => _previewContentResult(_unifiedResult(row)),
+          onOpen: (row) => _openDocument({'path': row.path}),
+          onReveal: (row) => _revealPath(row.path),
+        ),
+      ),
+      if (_selectedContentResult != null) ...[
+        const VerticalDivider(width: 1),
+        Expanded(flex: 2, child: _contentPreviewPane()),
+      ],
+    ],
+  );
+
   Future<void> _load({bool firstOpen = false}) async {
     Map<String, Object?> status;
     Map<String, Object?> settings;
@@ -701,6 +800,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
     setState(() { _settings = loaded; _developerMode = developerMode; _watchByAgent = status['watch'] == 'agent';
       if (status['ok'] != true) _error = '${status['message'] ?? '상태를 불러오지 못했습니다.'}'; });
+    _applyUnifiedView(loaded['unified_view'] == true);
     await _readContentStatus();
     if (!mounted) return;
     if (loaded['enabled'] == true) {
@@ -842,7 +942,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
   Future<void> _saveSettings(Map<String,Object?> next) async {
     final response=await _api.command('settings_set',next);
-    if(response['ok']==true){setState(()=>_settings=Map<String,Object?>.from(response['settings'] as Map));await _filtersChanged();}
+    if(response['ok']==true){setState(()=>_settings=Map<String,Object?>.from(response['settings'] as Map));_refreshUnified();await _filtersChanged();}
     else if(mounted){setState(()=>_error='${response['message'] ?? '설정을 저장하지 못했습니다.'}');}
   }
   Future<void> _pickExtensions() async {
@@ -894,6 +994,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     _refreshHourDensity();
     if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
     if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
+    _refreshUnified();
     await _loadPage();
   }
   bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
@@ -917,6 +1018,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     if (_start == null || _end == null) setState(() => _days = {});
     if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
     if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
+    _refreshUnified();
     _refreshHourDensity(); await _loadPage();
   }
   Future<void> _applyCustomDays() async {
@@ -1035,7 +1137,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
               ],
             ),
           Expanded(
-            child: (_contentMode || _relatedMode)
+            child: _unifiedView
+                ? ListenableBuilder(
+                    listenable: _searchBox,
+                    // 검색어가 없으면 기존 기간 타임라인을 보인다.
+                    builder: (context, _) => _searchBox.phase == InstantSearchPhase.empty
+                        ? _timelineArea(isNarrow, calendar, timeline)
+                        : _unifiedArea(),
+                  )
+                : (_contentMode || _relatedMode)
                 ? Column(children: [if (_contentMode) _contentSearchPanel(), Expanded(child: _contentResultsView())])
                 : (_fileTableView && _fileSearchSupported
                     ? Row(children: [
@@ -1045,32 +1155,34 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                           Expanded(flex: 2, child: _contentPreviewPane()),
                         ],
                       ])
-                    : (isNarrow
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _densityBar(vertical: false),
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 180),
-                                child: SingleChildScrollView(child: calendar),
-                              ),
-                              Expanded(child: timeline),
-                            ],
-                          )
-                        : Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _densityBar(vertical: true),
-                              Expanded(child: timeline),
-                              SizedBox(width: 320, child: SingleChildScrollView(child: calendar)),
-                            ],
-                          ))),
+                    : _timelineArea(isNarrow, calendar, timeline)),
           ),
         ],
       );
     });
   }
 
+
+  Widget _timelineArea(bool isNarrow, Widget calendar, Widget timeline) => isNarrow
+      ? Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _densityBar(vertical: false),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: SingleChildScrollView(child: calendar),
+            ),
+            Expanded(child: timeline),
+          ],
+        )
+      : Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _densityBar(vertical: true),
+            Expanded(child: timeline),
+            SizedBox(width: 320, child: SingleChildScrollView(child: calendar)),
+          ],
+        );
 
   Widget _operatorHelp() => Card(
     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1670,6 +1782,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   void _toggleKind(String kind, bool value) {
     setState(() => value ? _selectedKinds.add(kind) : _selectedKinds.remove(kind));
     _filtersChanged();
+    _refreshUnified();
     if (_fileTableView && _fileSearchSupported) _runFileSearch(_activeQuery);
   }
 
@@ -1739,7 +1852,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         suffixIcon: _searchBox.isSearching
             ? const Tooltip(message: '찾는 중', child: Icon(Icons.hourglass_top, key: ValueKey('tm-search-busy'), size: 16))
             : null,
-        hintText: _relatedMode ? '위계 검색' : _contentMode ? '본문 검색' : '이름 찾기',
+        hintText: _unifiedView ? '파일명·위계·본문 찾기' : _relatedMode ? '위계 검색' : _contentMode ? '본문 검색' : '이름 찾기',
         isDense: true,
       ),
       onSubmitted: (_) => _searchBox.submit(),
@@ -1875,10 +1988,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     OutlinedButton.icon(key:const ValueKey('tm-extensions'),onPressed:_pickExtensions,icon:const Icon(Icons.tune,size:16),label:const Text('확장자')),
     if (narrow) _kindMenu()
     else for(final entry in _kinds.entries) FilterChip(label:Text(entry.key),selected:_selectedKinds.contains(entry.value),onSelected:(value)=>_toggleKind(entry.value, value)),
-    _searchModeSelector(collapsed: width < tmModeCollapseWidth),
+    ChoiceChip(key:const ValueKey('tm-unified-toggle'),label:const Text('통합 보기'),tooltip:'파일명·위계·본문을 한 목록으로',selected:_unifiedView,showCheckmark:true,onSelected:_setUnifiedView),
+    if (!_unifiedView) _searchModeSelector(collapsed: width < tmModeCollapseWidth),
     // 좁은 창에서는 검색창을 넓히되 오른쪽 아이콘 두 개(도움말/열 보기, 더보기)가 같은 줄에 남게 한다.
     SizedBox(width:narrow ? max(120.0, width - 120) : 180,child:_searchField()),
-    if (_contentMode && !_relatedMode)
+    if (_unifiedView)
+      const SizedBox.shrink()
+    else if (_contentMode && !_relatedMode)
       IconButton(
         icon: const Icon(Icons.help_outline),
         tooltip: '검색 연산자 도움말',

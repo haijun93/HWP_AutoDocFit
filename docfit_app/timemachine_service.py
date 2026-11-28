@@ -26,7 +26,8 @@ from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
 from docfit_core.timemachine.content_search import CURRENT_HIERARCHY_SCHEMA_VERSION
 from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
 from docfit_core.timemachine.related import related_documents
-from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
+from docfit_core.timemachine.related_query import parse_related_query
+from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, EXCLUDED_DIRS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
 from docfit_core.timemachine.scan import default_roots, scan_roots
 from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
@@ -34,6 +35,7 @@ from .kagent_client import KAgentClient, data_dir
 from .kfind_client import KfindClient, KfindError
 from .rust_scan import find_klib_executable
 from .settings_schema import normalize_search_engine, normalize_search_backend_mode
+from .unified_search_host import UnifiedSearchHost
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -52,7 +54,8 @@ class TimemachineService:
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
                  developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None,
                  search_backend_mode_provider=None,
-                 search_backend: SearchBackend | None = None):
+                 search_backend: SearchBackend | None = None, unified_host=None):
+        self.unified_host = unified_host if unified_host is not None else UnifiedSearchHost()
         self.search_engine_provider = search_engine_provider
         self.search_backend_mode_provider = search_backend_mode_provider
         self._unsupported_search_backend_logged = set()
@@ -62,6 +65,7 @@ class TimemachineService:
         excluded_rows = self.store.purge_excluded()
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
+        self._content_db = content_db
         self.search_backend = search_backend if search_backend is not None else ModeSearchBackend(
             SqliteBackend(self.content_index),
             RustBackend(executable=find_klib_executable(), index_dir=data_dir() / "timemachine-tantivy"),
@@ -180,7 +184,7 @@ class TimemachineService:
     def _defaults(self):
         return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
                 "search_engine": "kfind",
-                "search_backend_mode": "sqlite",
+                "search_backend_mode": "sqlite", "unified_view": False,
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
 
     def _search_engine(self):
@@ -491,6 +495,7 @@ class TimemachineService:
         for worker in (scan_worker, self._content_thread):
             if worker and worker.ident is not None and worker is not threading.current_thread():
                 worker.join()
+        self.unified_host.close()
         self.kfind.close()
         close_backend = getattr(self.search_backend, "close", None)
         if close_backend:
@@ -767,7 +772,8 @@ class TimemachineService:
             if type(rust_content_index) is not bool: raise ValueError("settings")
             return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
                     "search_engine": data.get("search_engine", "kfind") if data.get("search_engine") in {"legacy", "kfind", "shadow"} else "kfind",
-                    "rust_content_index": rust_content_index, **self._idle_values(data, defaults)}
+                    "rust_content_index": rust_content_index, "unified_view": data.get("unified_view") is True,
+                    **self._idle_values(data, defaults)}
         except (OSError, ValueError, TypeError, KeyError):
             return defaults
 
@@ -1154,6 +1160,75 @@ class TimemachineService:
             row["file_name"] = row["name"]
         return {"ok": True, "mode": "query", "items": rows, **self._engine_status()}
 
+    def _unified(self, action, payload):
+        """통합 보기(파일명 > 위계 > 본문). 기존 3탭의 검색·설정에는 영향을 주지 않는다."""
+        if action == "unified_view_set":
+            enabled = payload.get("enabled")
+            if type(enabled) is not bool:
+                raise ValueError("설정 값을 확인해 주세요.")
+            # 화면 선택만 저장한다. 색인·감시 설정을 다시 적용하지 않는다.
+            with self._settings_lock:
+                settings = dict(self._settings, unified_view=enabled)
+                self._save_settings(settings)
+                self._settings = settings
+            if not enabled:
+                self.unified_host.close()
+            return {"ok": True, "unified_view": enabled}
+        if action == "unified_start":
+            return self._unified_start(payload)
+        if action == "unified_release":
+            self.unified_host.release()
+            return {"ok": True}
+        if action == "unified_close":
+            self.unified_host.close()
+            return {"ok": True}
+        generation = payload.get("generation")
+        if type(generation) is not int or generation <= 0:
+            raise ValueError("검색 요청을 확인해 주세요.")
+        if action == "unified_poll":
+            return {"ok": True, "result": self.unified_host.poll(generation)}
+        if action == "unified_page":
+            cursor = payload.get("cursor")
+            if type(cursor) is not int or cursor < 0:
+                raise ValueError("검색 페이지를 확인해 주세요.")
+            return {"ok": True, "result": self.unified_host.page(generation, cursor)}
+        if action == "unified_cancel":
+            self.unified_host.cancel(generation)
+            return {"ok": True}
+        return self._error("NOT_AVAILABLE", "지원하지 않는 몽땅검색 명령입니다.")
+
+    def _unified_start(self, payload):
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise ValueError("검색어는 200자 이하로 입력해 주세요.")
+        kinds = payload.get("kinds")
+        if kinds is not None and (not isinstance(kinds, list) or any(k not in KINDS for k in kinds)):
+            raise ValueError("종류 필터를 확인해 주세요.")
+        start, end = payload.get("start"), payload.get("end")
+        dates = None
+        if start is not None or end is not None:
+            self._filter_args({"start": start, "end": end}, range_required=True)
+            from datetime import datetime, timedelta
+            # 끝은 제외 시각이므로 직전 순간의 날짜까지 포함한다.
+            dates = [int(datetime.fromtimestamp(start).strftime("%Y%m%d")),
+                     int((datetime.fromtimestamp(end) - timedelta(microseconds=1)).strftime("%Y%m%d"))]
+        with self._settings_lock:
+            roots = list(self._settings["roots"])
+            extensions = list(self._settings["extensions"])
+        if kinds:
+            wanted = {ext.lstrip(".") for kind in kinds for ext in KINDS[kind]}
+            extensions = [ext for ext in extensions if ext in wanted]
+        if not roots:
+            raise ValueError("조사 폴더를 추가한 뒤 검색해 주세요.")
+        if not extensions:
+            raise ValueError("선택한 종류가 적용 확장자에 없습니다.")
+        generation = self.unified_host.start({
+            "query": query, "roots": roots, "extensions": extensions, "dates": dates,
+            "exclude_dirs": sorted(EXCLUDED_DIRS),
+            "related_queries": len(parse_related_query(query)) > 1,
+            "paragraphs": str(Path(self._content_db).resolve())})
+        return {"ok": True, "generation": generation}
+
     def _command(self, action, payload):
         if action in self.DEVELOPER_ONLY_ACTIONS:
             denied = self._require_developer_mode()
@@ -1177,7 +1252,7 @@ class TimemachineService:
             settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
                         "search_engine": payload.get("search_engine", self._search_engine()),
                         "rust_content_index": rust_content_index, "idle_indexing": idle_enabled,
-                        "idle_seconds": idle_seconds}
+                        "idle_seconds": idle_seconds, "unified_view": self._settings.get("unified_view", False)}
             if settings["search_engine"] not in {"legacy", "kfind", "shadow"}:
                 raise ValueError("검색 엔진을 확인해 주세요.")
             with self._settings_lock:
@@ -1199,6 +1274,8 @@ class TimemachineService:
             return {"ok": True, "settings": dict(settings, roots=list(roots))}
         if action == "scan":
             return self._start_scan()
+        if action.startswith("unified_"):
+            return self._unified(action, payload)
         if action == "content_index":
             path = payload.get("path")
             content_rules = Rules(extensions=self._settings["extensions"], extra_extensions=self._settings["extensions"])
