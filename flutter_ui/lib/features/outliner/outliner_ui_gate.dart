@@ -5,12 +5,22 @@ import 'outliner_workspace.dart';
 
 /// 아웃라이너 탭의 화면 방식 문지기(설정 키 `outliner_ui`: 'flutter' 기본 | 'native').
 ///
-/// - 'flutter': 기존 [OutlinerWorkspace] 를 그대로 보여 준다(위에 "새 창(Win32)으로 열기" 단추만 덧붙임).
+/// - 'flutter': 기존 [OutlinerWorkspace] 를 보여 준다(제목 줄 끝에 "새 창(Win32)으로 열기" 아이콘 단추).
 /// - 'native': Rust+Win32 창(outliner_win.exe)을 열고, 탭에는 안내만 보여 준다.
 /// 설정 읽기·쓰기·창 실행은 모두 기존 `outliner` 브리지 명령(`ui_mode`·`open_native`)이 맡는다.
 class OutlinerUiGate extends StatefulWidget {
-  const OutlinerUiGate({super.key, required this.api, this.workspaceBuilder});
+  const OutlinerUiGate({
+    super.key,
+    required this.api,
+    this.workspaceBuilder,
+    this.recentPagesStore,
+    this.panelStore,
+  });
   final ApiCall api;
+
+  /// 시험용: 파일 대신 쓸 저장소. 없으면 아웃라이너 데이터 폴더의 파일.
+  final RecentPagesStore? recentPagesStore;
+  final OutlinerPanelStore? panelStore;
 
   /// 시험용: 기존 화면 대신 보여 줄 위젯.
   final Widget Function(ApiCall api)? workspaceBuilder;
@@ -91,22 +101,30 @@ class _OutlinerUiGateState extends State<OutlinerUiGate> {
     final mode = _mode;
     if (mode == null) return const SizedBox.expand();
     if (mode == 'native') return _nativeNotice(context);
-    final workspace = widget.workspaceBuilder?.call(widget.api) ?? OutlinerWorkspace(api: widget.api);
+    // 화면이 바뀌므로 칸을 벗어나는 것으로 쳐서 확정 전 글이 저장되게 한다.
+    final openButton = IconButton(
+      key: const ValueKey('outliner-open-native'),
+      tooltip: '새 창(Win32)으로 열기',
+      onPressed: _busy ? null : _switchToNative,
+      icon: const Icon(Icons.open_in_new),
+    );
+    final builder = widget.workspaceBuilder;
+    if (builder == null) {
+      // 단추를 제목 줄에 넣어 한 줄을 아낀다.
+      return OutlinerWorkspace(
+        api: widget.api,
+        recentPagesStore: widget.recentPagesStore,
+        panelStore:
+            widget.panelStore ?? FileOutlinerPanelStore(outlinerDataDirectory),
+        headerActions: [openButton],
+        notice: _message,
+      );
+    }
     return Column(
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: TextButton.icon(
-              key: const ValueKey('outliner-open-native'),
-              onPressed: _busy ? null : _switchToNative,
-              icon: const Icon(Icons.open_in_new, size: 16),
-              label: Text(_message.isEmpty ? '새 창(Win32)으로 열기' : _message),
-            ),
-          ),
-        ),
-        Expanded(child: workspace),
+        Align(alignment: Alignment.centerRight, child: openButton),
+        if (_message.isNotEmpty) Text(_message),
+        Expanded(child: builder(widget.api)),
       ],
     );
   }
