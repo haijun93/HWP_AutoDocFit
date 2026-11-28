@@ -1,0 +1,796 @@
+{
+  "baseline_commit": "be87c53f",
+  "synthetic_seed": 20261124,
+  "synthetic_documents": 1000,
+  "samples_per_phase": 5,
+  "clock": "SetWindowText immediately before input to GDI EndPaint; not DWM or physical keyboard/IME",
+  "own_builds_or_tests_during_measurement": false,
+  "other_system_load_controlled": false,
+  "before_binary_sha256": "52B778173B9AA1859653D4A4FA55ED32B837D7781034DB5DF5F5BF0E4B6FF68B",
+  "after_binary_sha256": "6F968C874AD850B950B11AF30025BE3D4F6BC66A43945FD987C80373B4997710",
+  "intermediate_candidates": [
+    {
+      "reason": "기본 경로 Ctrl+PgDn/PgUp 분기 보완 전 후보",
+      "binary_sha256": "C1811B48D1A10F896B10F5E6C81B525F5E7EFE8FEB5B33E37467E28DD1DF9D46",
+      "samples": [
+        {
+          "run": 1,
+          "first_gdi_ms": [
+            25.3527,
+            25.9779
+          ],
+          "complete_gdi_ms": [
+            64.8131,
+            67.1763
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3571712,
+          "idle_private_bytes_start": 3571712,
+          "idle_private_working_set_end": 2793472,
+          "idle_private_working_set_start": 2793472,
+          "idle_seconds": 2
+        },
+        {
+          "run": 2,
+          "first_gdi_ms": [
+            22.115,
+            15.9045
+          ],
+          "complete_gdi_ms": [
+            183.0027,
+            168.8104
+          ],
+          "idle_cpu_ms": 15.625,
+          "idle_private_bytes_end": 3784704,
+          "idle_private_bytes_start": 3784704,
+          "idle_private_working_set_end": 2990080,
+          "idle_private_working_set_start": 2990080,
+          "idle_seconds": 2
+        },
+        {
+          "run": 3,
+          "first_gdi_ms": [
+            21.2754,
+            19.0035
+          ],
+          "complete_gdi_ms": [
+            52.203,
+            53.4726
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3956736,
+          "idle_private_bytes_start": 3956736,
+          "idle_private_working_set_end": 2883584,
+          "idle_private_working_set_start": 2883584,
+          "idle_seconds": 2
+        },
+        {
+          "run": 4,
+          "first_gdi_ms": [
+            25.2848,
+            21.826
+          ],
+          "complete_gdi_ms": [
+            57.1078,
+            56.2317
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3530752,
+          "idle_private_bytes_start": 3530752,
+          "idle_private_working_set_end": 2846720,
+          "idle_private_working_set_start": 2846720,
+          "idle_seconds": 2
+        },
+        {
+          "run": 5,
+          "first_gdi_ms": [
+            23.666,
+            19.4612
+          ],
+          "complete_gdi_ms": [
+            55.3517,
+            49.8423
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3862528,
+          "idle_private_bytes_start": 3796992,
+          "idle_private_working_set_end": 2928640,
+          "idle_private_working_set_start": 2928640,
+          "idle_seconds": 2
+        }
+      ]
+    },
+    {
+      "reason": "키 분기 보완 후, 빈 검색 중 화면 단발 지연 도입 전 후보",
+      "binary_sha256": "ADA538A95DE4630AE8BA1653EC6BF7C868CA69D491BC322B8096835D7FF4CA73",
+      "samples": [
+        {
+          "run": 1,
+          "first_gdi_ms": [
+            26.9597,
+            20.0318
+          ],
+          "complete_gdi_ms": [
+            65.1168,
+            57.4952
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3878912,
+          "idle_private_bytes_start": 3878912,
+          "idle_private_working_set_end": 2891776,
+          "idle_private_working_set_start": 2891776,
+          "idle_seconds": 2
+        },
+        {
+          "run": 2,
+          "first_gdi_ms": [
+            32.5262,
+            18.1078
+          ],
+          "complete_gdi_ms": [
+            66.7055,
+            61.1616
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3780608,
+          "idle_private_bytes_start": 3780608,
+          "idle_private_working_set_end": 2859008,
+          "idle_private_working_set_start": 2859008,
+          "idle_seconds": 2
+        },
+        {
+          "run": 3,
+          "first_gdi_ms": [
+            31.4155,
+            28.8476
+          ],
+          "complete_gdi_ms": [
+            69.7401,
+            74.1142
+          ],
+          "idle_cpu_ms": 15.625,
+          "idle_private_bytes_end": 3731456,
+          "idle_private_bytes_start": 3731456,
+          "idle_private_working_set_end": 2859008,
+          "idle_private_working_set_start": 2859008,
+          "idle_seconds": 2
+        },
+        {
+          "run": 4,
+          "first_gdi_ms": [
+            29.7877,
+            22.3852
+          ],
+          "complete_gdi_ms": [
+            65.4523,
+            53.1868
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3608576,
+          "idle_private_bytes_start": 3608576,
+          "idle_private_working_set_end": 2899968,
+          "idle_private_working_set_start": 2899968,
+          "idle_seconds": 2
+        },
+        {
+          "run": 5,
+          "first_gdi_ms": [
+            21.1898,
+            20.8699
+          ],
+          "complete_gdi_ms": [
+            55.1582,
+            55.6511
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3940352,
+          "idle_private_bytes_start": 3940352,
+          "idle_private_working_set_end": 2772992,
+          "idle_private_working_set_start": 2772992,
+          "idle_seconds": 2
+        }
+      ]
+    },
+    {
+      "reason": "단발 지연 도입 후, 페이지 응답 메타데이터 보존 보완 전 후보",
+      "binary_sha256": "683CF71F0B1AD4E8FCDBD2EC464C5CD9BEBA761BE4DB337E9DB36B14DFFCBC9E",
+      "samples": [
+        {
+          "run": 1,
+          "first_gdi_ms": [
+            40.6558,
+            34.3184
+          ],
+          "complete_gdi_ms": [
+            80.1341,
+            76.2441
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3686400,
+          "idle_private_bytes_start": 3686400,
+          "idle_private_working_set_end": 2854912,
+          "idle_private_working_set_start": 2854912,
+          "idle_seconds": 2
+        },
+        {
+          "run": 2,
+          "first_gdi_ms": [
+            22.2148,
+            18.0215
+          ],
+          "complete_gdi_ms": [
+            92.3394,
+            77.0026
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3461120,
+          "idle_private_bytes_start": 3461120,
+          "idle_private_working_set_end": 2801664,
+          "idle_private_working_set_start": 2801664,
+          "idle_seconds": 2
+        },
+        {
+          "run": 3,
+          "first_gdi_ms": [
+            17.1258,
+            14.7792
+          ],
+          "complete_gdi_ms": [
+            61.0849,
+            50.2714
+          ],
+          "idle_cpu_ms": 0.0,
+          "idle_private_bytes_end": 3547136,
+          "idle_private_bytes_start": 3547136,
+          "idle_private_working_set_end": 2818048,
+          "idle_private_working_set_start": 2818048,
+          "idle_seconds": 2
+        },
+        {
+          "run": 4,
+          "first_gdi_ms": [
+            21.478,
+            15.4453
+          ],
+          "complete_gdi_ms": [
+            61.5408,
+            55.5445
+          ],
+          "idle_cpu_ms": 15.625,
+          "idle_private_bytes_end": 3985408,
+          "idle_private_bytes_start": 3985408,
+          "idle_private_working_set_end": 2801664,
+          "idle_private_working_set_start": 2801664,
+          "idle_seconds": 2
+        },
+        {
+          "run": 5,
+          "first_gdi_ms": [
+            26.084,
+            18.5188
+          ],
+          "complete_gdi_ms": [
+            72.6933,
+            64.2757
+          ],
+          "idle_cpu_ms": 15.625,
+          "idle_private_bytes_end": 3805184,
+          "idle_private_bytes_start": 3805184,
+          "idle_private_working_set_end": 2879488,
+          "idle_private_working_set_start": 2879488,
+          "idle_seconds": 2
+        }
+      ]
+    }
+  ],
+  "phases": {
+    "before": [
+      {
+        "run": 1,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 123.2295,
+            "complete_gdi_ms": 282.9598,
+            "visible_rows": 80,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20,
+              "[Body]": 40
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 125.1914,
+            "complete_gdi_ms": 4602.5125,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3608576,
+        "idle_private_bytes_start": 3608576,
+        "idle_private_working_set_end": 2932736,
+        "idle_private_working_set_start": 2932736,
+        "idle_seconds": 2
+      },
+      {
+        "run": 2,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 108.3775,
+            "complete_gdi_ms": 217.6468,
+            "visible_rows": 80,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20,
+              "[Body]": 40
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 133.4568,
+            "complete_gdi_ms": 287.8023,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3694592,
+        "idle_private_bytes_start": 3694592,
+        "idle_private_working_set_end": 2953216,
+        "idle_private_working_set_start": 2953216,
+        "idle_seconds": 2
+      },
+      {
+        "run": 3,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 50.1105,
+            "complete_gdi_ms": 447.2497,
+            "visible_rows": 80,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20,
+              "[Body]": 40
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 218.3456,
+            "complete_gdi_ms": 481.0019,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "idle_cpu_ms": 15.625,
+        "idle_private_bytes_end": 3715072,
+        "idle_private_bytes_start": 3715072,
+        "idle_private_working_set_end": 2953216,
+        "idle_private_working_set_start": 2953216,
+        "idle_seconds": 2
+      },
+      {
+        "run": 4,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 101.8943,
+            "complete_gdi_ms": 666.4483,
+            "visible_rows": 80,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20,
+              "[Body]": 40
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 123.2314,
+            "complete_gdi_ms": 615.0905,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3629056,
+        "idle_private_bytes_start": 3629056,
+        "idle_private_working_set_end": 2879488,
+        "idle_private_working_set_start": 2879488,
+        "idle_seconds": 2
+      },
+      {
+        "run": 5,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 96.1095,
+            "complete_gdi_ms": 248.6037,
+            "visible_rows": 80,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20,
+              "[Body]": 40
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 176.464,
+            "complete_gdi_ms": 365.8377,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3702784,
+        "idle_private_bytes_start": 3702784,
+        "idle_private_working_set_end": 2895872,
+        "idle_private_working_set_start": 2895872,
+        "idle_seconds": 2
+      }
+    ],
+    "after": [
+      {
+        "run": 1,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 22.5055,
+            "complete_gdi_ms": 65.2035,
+            "visible_rows": 40,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 19.1985,
+            "complete_gdi_ms": 56.5666,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "active_private_bytes": 3727360,
+        "active_private_working_set_bytes": 2871296,
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3727360,
+        "idle_private_bytes_start": 3727360,
+        "idle_private_working_set_end": 2871296,
+        "idle_private_working_set_start": 2871296,
+        "idle_seconds": 2
+      },
+      {
+        "run": 2,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 19.5624,
+            "complete_gdi_ms": 56.6136,
+            "visible_rows": 40,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 18.1378,
+            "complete_gdi_ms": 56.4803,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "active_private_bytes": 3776512,
+        "active_private_working_set_bytes": 2875392,
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3776512,
+        "idle_private_bytes_start": 3776512,
+        "idle_private_working_set_end": 2875392,
+        "idle_private_working_set_start": 2875392,
+        "idle_seconds": 2
+      },
+      {
+        "run": 3,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 23.9646,
+            "complete_gdi_ms": 63.2732,
+            "visible_rows": 40,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 17.7589,
+            "complete_gdi_ms": 58.3256,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "active_private_bytes": 3756032,
+        "active_private_working_set_bytes": 2936832,
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3756032,
+        "idle_private_bytes_start": 3756032,
+        "idle_private_working_set_end": 2936832,
+        "idle_private_working_set_start": 2936832,
+        "idle_seconds": 2
+      },
+      {
+        "run": 4,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 16.57,
+            "complete_gdi_ms": 88.7633,
+            "visible_rows": 40,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 13.3979,
+            "complete_gdi_ms": 102.6803,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "active_private_bytes": 3616768,
+        "active_private_working_set_bytes": 2932736,
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3616768,
+        "idle_private_bytes_start": 3616768,
+        "idle_private_working_set_end": 2932736,
+        "idle_private_working_set_start": 2932736,
+        "idle_seconds": 2
+      },
+      {
+        "run": 5,
+        "queries": [
+          {
+            "query": "예산집행",
+            "first_gdi_ms": 20.7169,
+            "complete_gdi_ms": 60.4797,
+            "visible_rows": 40,
+            "tier_counts": {
+              "[Names]": 20,
+              "[Hierarchy]": 20
+            }
+          },
+          {
+            "query": "2026; 공사 계약",
+            "first_gdi_ms": 13.895,
+            "complete_gdi_ms": 51.0739,
+            "visible_rows": 4,
+            "tier_counts": {
+              "[Names]": 1,
+              "[Hierarchy]": 3
+            }
+          }
+        ],
+        "active_private_bytes": 3776512,
+        "active_private_working_set_bytes": 2850816,
+        "idle_cpu_ms": 0.0,
+        "idle_private_bytes_end": 3776512,
+        "idle_private_bytes_start": 3776512,
+        "idle_private_working_set_end": 2850816,
+        "idle_private_working_set_start": 2850816,
+        "idle_seconds": 2
+      }
+    ]
+  },
+  "comparisons": [
+    {
+      "query": "예산집행",
+      "first_filename_rows_equal_all_five": true,
+      "complete_dump_fields_equal_all_five": false,
+      "before_first": {
+        "samples_ms": [
+          123.2295,
+          108.3775,
+          50.1105,
+          101.8943,
+          96.1095
+        ],
+        "median_ms": 101.8943,
+        "min_ms": 50.1105,
+        "max_ms": 123.2295
+      },
+      "before_complete": {
+        "samples_ms": [
+          282.9598,
+          217.6468,
+          447.2497,
+          666.4483,
+          248.6037
+        ],
+        "median_ms": 282.9598,
+        "min_ms": 217.6468,
+        "max_ms": 666.4483
+      },
+      "after_first": {
+        "samples_ms": [
+          22.5055,
+          19.5624,
+          23.9646,
+          16.57,
+          20.7169
+        ],
+        "median_ms": 20.7169,
+        "min_ms": 16.57,
+        "max_ms": 23.9646
+      },
+      "after_complete": {
+        "samples_ms": [
+          65.2035,
+          56.6136,
+          63.2732,
+          88.7633,
+          60.4797
+        ],
+        "median_ms": 63.2732,
+        "min_ms": 56.6136,
+        "max_ms": 88.7633
+      },
+      "after_first_all_under_16ms": false
+    },
+    {
+      "query": "2026; 공사 계약",
+      "first_filename_rows_equal_all_five": true,
+      "complete_dump_fields_equal_all_five": true,
+      "before_first": {
+        "samples_ms": [
+          125.1914,
+          133.4568,
+          218.3456,
+          123.2314,
+          176.464
+        ],
+        "median_ms": 133.4568,
+        "min_ms": 123.2314,
+        "max_ms": 218.3456
+      },
+      "before_complete": {
+        "samples_ms": [
+          4602.5125,
+          287.8023,
+          481.0019,
+          615.0905,
+          365.8377
+        ],
+        "median_ms": 481.0019,
+        "min_ms": 287.8023,
+        "max_ms": 4602.5125
+      },
+      "after_first": {
+        "samples_ms": [
+          19.1985,
+          18.1378,
+          17.7589,
+          13.3979,
+          13.895
+        ],
+        "median_ms": 17.7589,
+        "min_ms": 13.3979,
+        "max_ms": 19.1985
+      },
+      "after_complete": {
+        "samples_ms": [
+          56.5666,
+          56.4803,
+          58.3256,
+          102.6803,
+          51.0739
+        ],
+        "median_ms": 56.5666,
+        "min_ms": 51.0739,
+        "max_ms": 102.6803
+      },
+      "after_first_all_under_16ms": false
+    }
+  ],
+  "native_pages": {
+    "back_forward_equal": true,
+    "excluded_folder_honored": true,
+    "hidden_session_released": true,
+    "ok": true,
+    "pages": 23,
+    "totals": [
+      60,
+      449,
+      0
+    ],
+    "unique_documents": 509
+  },
+  "rust_tests": {
+    "ktm": {
+      "passed": 287,
+      "ignored": 1,
+      "result_lines": [
+        "test result: ok. 268 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.48s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.43s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.03s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "kfind-names": {
+      "passed": 34,
+      "ignored": 0,
+      "result_lines": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 155.58s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.95s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "kfind": {
+      "passed": 52,
+      "ignored": 1,
+      "result_lines": [
+        "test result: ok. 46 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.24s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.14s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  },
+  "python_result_lines": [
+    "Ran 50 tests in 5.241s",
+    "OK (skipped=1)",
+    "Hancom activation attempts: 0"
+  ],
+  "default_unified_search": false,
+  "native_loading": {
+    "hidden_timer_fires": 0,
+    "loading_painted": true,
+    "ok": true,
+    "timer_fires": 1
+  }
+}

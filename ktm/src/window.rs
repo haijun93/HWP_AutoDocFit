@@ -39,6 +39,8 @@ use windows_sys::Win32::{
 const READY: u32 = WM_APP + 21;
 const QUICK_SEARCH_EMPTY_HINT: &str = "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기";
 const WARMED: u32 = WM_APP + 22;
+/// 통합 검색의 빈 중간 화면만 한 번 미룬다. 결과 도착·숨김 때 해제한다.
+const LOADING_PAINT_TIMER: usize = 1;
 pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -91,16 +93,22 @@ struct WorkTimes {
 }
 
 enum Reply {
+    UnifiedSession(u64, ktm::backend::unified::Session),
     Unified(u64, ktm::backend::unified::Snapshot, Instant, WorkTimes),
     Search(u64, Tab, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
     TopTopics(Vec<String>),
+    /// 파일명 0건일 때 확인한 검색 범위.
+    Coverage(u64, ktm::notice::NameCoverage),
 }
 
 struct Ui {
     state: State,
     rows: Vec<Row>,
     combined_batches: Vec<(tm_state::ResultKind, Vec<Row>)>,
+    unified_session: Option<ktm::backend::unified::Session>,
+    unified_cursors: Vec<ktm::backend::unified::Cursor>,
+    unified_page: usize,
     terms: Vec<String>,
     edit: HWND,
     within_edit: HWND,
@@ -123,9 +131,17 @@ struct Ui {
     first_input_paint: Option<Instant>,
     last_input_paint_ms: Option<f64>,
     unified_paint: Option<(Instant, bool)>,
+    unified_names_painted: bool,
+    loading_painted: bool,
+    loading_timer_fires: usize,
     /// External input clock, populated only by the isolated measurement probe.
     probe_input: Option<Instant>,
     ready_at: Option<Instant>,
+    /// 이번 검색의 소요 시간. `timing`은 첫 그림 뒤 비우므로 요약 줄은 이 값을 쓴다.
+    elapsed_secs: Option<f64>,
+    coverage: Option<ktm::notice::NameCoverage>,
+    /// 받은 결과가 설정(제외 폴더·하위 폴더)에서 모두 빠졌다.
+    hidden_by_settings: bool,
     hotkey: String,
     hotkey_error: String,
     cancel: Arc<AtomicBool>,
@@ -335,31 +351,34 @@ fn event(h: HWND, e: Event) {
     let need_body_snippets = matches!(&e, Event::SetExcludeFilename(true));
     let record_recent_search = matches!(&e, Event::Submit | Event::ApplyHistory(_));
     let (effects, query_changed, within_changed, history_changed) = edit(|u| {
+        let previous_generation = u.state.generation;
         let prev_query = u.state.query.clone();
         let prev_within = u.state.options.within_query.clone();
         let prev_recent = u.state.recent_queries.clone();
         let prev_fav = u.state.favorite_queries.clone();
-        if matches!(
-            &e,
-            Event::Input(_)
-                | Event::SwitchTab(_)
-                | Event::Hide
-                | Event::Submit
-                | Event::SetDateFilter(_)
-                | Event::SetFolderFilter(_)
-                | Event::ApplyAutocomplete(_)
-                | Event::ApplyTopTopic(_)
-                | Event::ApplyHistory(_)
-        ) {
-            u.cancel.store(true, Ordering::Relaxed);
-        }
         let (s, fx) = tm_state::step(&u.state, e);
+        // 진행 중인 검색은 새 세대가 생길 때만 취소한다. 대신할 검색 없이 취소하면
+        // 같은 세대의 구간이 오류가 되거나 '검색 중'에 멈춘다.
+        if s.generation != u.state.generation {
+            u.cancel.store(true, Ordering::Relaxed);
+            u.elapsed_secs = None;
+            u.coverage = None;
+            u.hidden_by_settings = false;
+        }
         let changed = !user_input && s.query != prev_query;
         let within_changed = s.options.within_query != prev_within;
         let hist_changed = s.recent_queries != prev_recent
             || s.favorite_queries != prev_fav
             || (record_recent_search && !s.query.trim().is_empty());
         u.state = s;
+        if u.state.generation != previous_generation || u.state.phase == Phase::Hidden {
+            u.unified_session = None;
+            u.unified_cursors.clear();
+            u.unified_page = 0;
+            u.unified_names_painted = false;
+            u.loading_painted = false;
+            u.loading_timer_fires = 0;
+        }
         if need_body_snippets {
             let count = u.rows.len();
             request_snippets(u, count);
@@ -535,7 +554,15 @@ fn event(h: HWND, e: Event) {
     });
     let _ = path.send(s.to_string());
     unsafe {
-        InvalidateRect(h, null(), 0);
+        let defer_loading = user_input && with(|u| u.settings.unified_search && u.state.phase == Phase::Searching);
+        if defer_loading {
+            // 빠른 파일명이 도착하면 Results 이벤트가 타이머를 해제하고 즉시 그린다.
+            // 느린 원천은 단발 타이머 이후 기존 검색 중 화면을 보여 준다.
+            if SetTimer(h, LOADING_PAINT_TIMER, 10, None) == 0 { InvalidateRect(h, null(), 0); }
+        } else {
+            KillTimer(h, LOADING_PAINT_TIMER);
+            InvalidateRect(h, null(), 0);
+        }
     }
 }
 
@@ -641,6 +668,35 @@ fn cycle_sort(h: HWND) {
     unsafe { InvalidateRect(h, null(), 0) };
 }
 
+/// 페이지는 같은 전역 스냅샷만 사용한다. 세대를 올려 이전 페이지의 발췌 응답을 차단한다.
+fn unified_page(h: HWND, forward: bool) {
+    let changed = edit(|u| {
+        if u.state.pending_parts != 0 || u.state.phase != Phase::Results { return false; }
+        let Some(session) = &u.unified_session else { return false; };
+        let target = if forward {
+            let Ok(page) = session.page(u.unified_cursors[u.unified_page], u.settings.bounded_max_results()) else { return false; };
+            let Some(next) = page.next else { return false; };
+            if u.unified_cursors.len() == u.unified_page + 1 { u.unified_cursors.push(next); }
+            u.unified_page + 1
+        } else if u.unified_page > 0 { u.unified_page - 1 } else { return false; };
+        let Ok(mut page) = session.page(u.unified_cursors[target], u.settings.bounded_max_results()) else { return false; };
+        let allowed = ktm::layout::filter_row_indices(&page.answer.rows, &u.settings, u.state.selected_folder.as_deref());
+        page.answer.rows = allowed.into_iter().map(|i|page.answer.rows[i].clone()).collect();
+        ktm::backend::unified::sort_within_tiers(&mut page.answer.rows, u.body_sort);
+        u.cancel.store(true, Ordering::Relaxed);
+        u.cancel = Arc::new(AtomicBool::new(false));
+        u.state.generation += 1;
+        u.rows = page.answer.rows;
+        u.state.result_count = u.rows.len();
+        u.state.selected = (!u.rows.is_empty()).then_some(0);
+        u.unified_page = target;
+        u.top = 0;
+        request_snippets(u, ktm::backend::SNIPPET_PREFETCH);
+        true
+    });
+    if changed { unsafe { InvalidateRect(h, null(), 0); } }
+}
+
 fn key(h: HWND, key: usize) -> bool {
     unsafe {
         if with(|u| u.modal.is_some()) {
@@ -680,6 +736,8 @@ fn key(h: HWND, key: usize) -> bool {
         let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
         let alt = GetKeyState(VK_MENU as i32) < 0;
         match key as u16 {
+            VK_NEXT if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, true); }
+            VK_PRIOR if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, false); }
             VK_ESCAPE => event(h, Event::Hide),
             VK_RETURN => {
                 if ctrl {
@@ -1145,12 +1203,16 @@ unsafe fn paint(h: HWND) {
             draw(h, dc, r);
         }
         EndPaint(h, &ps);
+        if with(|u| u.settings.unified_search && u.state.phase == Phase::Searching) {
+            edit(|u| u.loading_painted = true);
+        }
         if let Some(start)=edit(|u|u.first_input_paint.take()) {
             let elapsed=start.elapsed().as_secs_f64()*1000.0;
             edit(|u|u.last_input_paint_ms=Some(elapsed));
             log("first_input_paint_ms",elapsed);
         }
         if let Some((start, complete)) = edit(|u| u.unified_paint.take()) {
+            if !complete { edit(|u| u.unified_names_painted = true); }
             phase(if complete { "unified_complete_to_paint_ms" } else { "unified_names_to_paint_ms" }, start.elapsed());
             if let Some(input) = with(|u| u.probe_input) {
                 phase(if complete { "probe_input_to_complete_paint_ms" } else { "probe_input_to_names_paint_ms" }, input.elapsed());
@@ -1578,7 +1640,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 },
                 p.tab_bg,
             );
-            let elapsed = u.timing.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
             let display_ids = ktm::layout::settings_visible_indices(
                 &u.rows,
                 &u.settings,
@@ -1611,7 +1672,19 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 "☷"
             };
             // 파일명·본문 매치 수는 오른쪽 접기 단추(group_left~)에 따로 그리므로 여기에 또 쓰면 겹친다.
-            let summary = format!("{view}  {}개 · {:.2}초", display_ids.len(), elapsed);
+            let facts = ktm::notice::Facts {
+                phase: u.state.phase,
+                pending: u.state.parts_pending(),
+                error: u.state.error.as_deref(),
+                found: u.rows.len(),
+                visible: display_ids.len(),
+                hidden_by_settings: u.hidden_by_settings,
+                coverage: u.coverage.as_ref(),
+                scoped: u.state.date_filter != DateFilter::All
+                    || u.state.selected_ext.is_some()
+                    || u.state.selected_folder.is_some(),
+            };
+            let summary = format!("{view}  {}", ktm::notice::summary(facts, u.elapsed_secs));
             text(
                 &summary,
                 RECT {
@@ -1860,42 +1933,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
             }
 
-            // ⑥a 오류: 상태줄 한 줄로만 보이면 놓치므로 목록 자리에 안내를 크게 보인다.
-            if u.state.phase == Phase::Error {
-                if let Some(message) = &u.state.error {
+            // ⑥ 목록이 비면 이유를 목록 자리에 크게 보인다: 결과 없음 / 검색 못함·색인 준비 중 /
+            // 일부만 검색 / 조건 때문에 숨김. 상태줄 한 줄로만 보이면 놓친다.
+            if !u.state.query.trim().is_empty() {
+                if let Some(note) = ktm::notice::notice(facts) {
                     let ey = bands.list_top + scale(h, 12);
                     SelectObject(mem, u.title_font);
-                    text(
-                        "검색을 완료하지 못했습니다",
-                        RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) },
-                        p.text,
-                        0,
-                    );
+                    text(note.title, RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) }, p.text, 0);
                     SelectObject(mem, u.font);
                     SetTextColor(mem, p.text_sub);
-                    let ws = wide(message);
-                    let mut rc = RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 110) };
+                    let ws = wide(&note.detail);
+                    let mut rc = RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 130) };
                     DrawTextW(mem, ws.as_ptr(), (ws.len() - 1) as i32, &mut rc, DT_WORDBREAK | DT_NOPREFIX);
-                }
-            }
-
-            // ⑥b 결과가 없거나 검색 중일 때 빈 화면 대신 안내를 보인다.
-            if u.rows.is_empty() && !u.state.query.trim().is_empty() {
-                let note = match u.state.phase {
-                    // 오류는 위 ⑥a가 이미 제목·사유를 그린다(겹쳐 그리면 글자가 뭉개진다).
-                    Phase::Results => Some((
-                        "검색 결과가 없습니다",
-                        "철자·띄어쓰기를 바꾸거나, 기간·형식 조건을 '전체'로 바꿔 보세요.",
-                    )),
-                    Phase::Searching => Some(("검색 중…", "")),
-                    _ => None,
-                };
-                if let Some((title, detail)) = note {
-                    let ey = bands.list_top + scale(h, 12);
-                    SelectObject(mem, u.title_font);
-                    text(title, RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) }, p.text, 0);
-                    SelectObject(mem, u.font);
-                    text(detail, RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 54) }, p.text_sub, DT_END_ELLIPSIS);
                 }
             }
 
@@ -2324,6 +2373,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => ("검색 중…".into(), String::new()),
+                    Phase::Results if u.unified_session.is_some() => (
+                        format!("문서 {}건 · {}쪽", u.rows.len(), u.unified_page + 1),
+                        "Ctrl+PgUp 이전 · Ctrl+PgDn 이어보기".into(),
+                    ),
                     Phase::Results => (
                         format!("문서 {}건", u.rows.len()),
                         format!("폴더 {}개", u.state.folder_counts.len()),
@@ -2905,6 +2958,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             WM_PAINT => {
                 paint(h);
+                0
+            }
+            WM_TIMER if w == LOADING_PAINT_TIMER => {
+                KillTimer(h, LOADING_PAINT_TIMER);
+                if with(|u| u.state.phase == Phase::Searching) {
+                    edit(|u| u.loading_timer_fires += 1);
+                    InvalidateRect(h, null(), 0);
+                }
                 0
             }
             WM_ERASEBKGND => 1,
@@ -3849,6 +3910,25 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
+                        Reply::UnifiedSession(g, session) => {
+                            if g == with(|u| u.state.generation) && with(|u| u.state.phase) != Phase::Hidden {
+                                edit(|u| {
+                                    u.unified_cursors = vec![ktm::backend::unified::Cursor::default()];
+                                    u.unified_page = 0;
+                                    u.unified_session = Some(session);
+                                });
+                                InvalidateRect(h, null(), 0);
+                            }
+                            continue;
+                        }
+                        Reply::Coverage(g, coverage) => {
+                            edit(|u| {
+                                if g == u.state.generation {
+                                    u.coverage = Some(coverage);
+                                }
+                            });
+                            continue;
+                        }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
                                 if g == u.state.generation {
@@ -3878,6 +3958,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 u.state.selected.and_then(|i| u.rows.get(i)).map(|r| ktm::backend::unified::path_key(&r.path)),
                             ));
                             let allowed = ktm::layout::filter_row_indices(&answer.rows, &settings, folder.as_deref());
+                            let all_hidden = !answer.rows.is_empty() && allowed.is_empty();
                             answer.rows = allowed.into_iter().map(|i| answer.rows[i].clone()).collect();
                             ktm::backend::unified::sort_within_tiers(&mut answer.rows, with(|u| u.body_sort));
                             event(h, Event::SearchPartFinished {
@@ -3886,6 +3967,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             edit(|u| {
                                 u.rows = answer.rows;
+                                u.hidden_by_settings = all_hidden;
+                                u.elapsed_secs = Some(start.elapsed().as_secs_f64());
                                 u.terms = answer.terms;
                                 u.state.folder_counts = answer.folder_counts;
                                 u.state.autocompletes = answer.autocompletes;
@@ -3898,7 +3981,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 }
                                 u.timing.get_or_insert(start);
                                 u.ready_at.get_or_insert_with(Instant::now);
-                                if snapshot.completed == tm_state::ResultKind::Names || snapshot.final_part {
+                                if (snapshot.completed == tm_state::ResultKind::Names && !u.unified_names_painted) || snapshot.final_part {
                                     u.unified_paint = Some((start, snapshot.final_part));
                                 }
                             });
@@ -3930,6 +4013,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                         &settings,
                                         folder.as_deref(),
                                     );
+                                    let all_hidden = !rows.is_empty() && allowed.is_empty();
+                                    edit(|u| {
+                                        u.hidden_by_settings |= all_hidden;
+                                        u.elapsed_secs = Some(start.elapsed().as_secs_f64());
+                                    });
                                     let rows = allowed
                                         .into_iter()
                                         .filter_map(|i| rows.get(i).cloned())
@@ -3963,7 +4051,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 Err(message) => {
                                     if with(|u| u.state.tab) == Tab::All {
                                         eprintln!("combined search leg failed: {message}");
-                                        edit(|u| { u.leg_errors.push(message.clone()); });
+                                        let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
+                                        let message = format!("{}: {message}", ktm::backend::unified::label(kind));
+                                        edit(|u| { u.leg_errors.push(message.clone()); u.elapsed_secs = Some(start.elapsed().as_secs_f64()); });
                                         event(h, Event::SearchFailed { generation: g, message });
                                     } else {
                                         event(h, Event::SearchFailed { generation: g, message });
@@ -4175,6 +4265,9 @@ pub fn run() -> Result<(), String> {
                 },
                 rows: Vec::new(),
                 combined_batches: Vec::new(),
+                unified_session: None,
+                unified_cursors: Vec::new(),
+                unified_page: 0,
                 terms: Vec::new(),
                 edit: ed,
                 within_edit: within_ed,
@@ -4197,8 +4290,14 @@ pub fn run() -> Result<(), String> {
                 first_input_paint: None,
                 last_input_paint_ms: None,
                 unified_paint: None,
+                unified_names_painted: false,
+                loading_painted: false,
+                loading_timer_fires: 0,
                 probe_input: None,
                 ready_at: None,
+                elapsed_secs: None,
+                coverage: None,
+                hidden_by_settings: false,
                 hotkey: String::new(),
                 hotkey_error: String::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
@@ -4297,19 +4396,38 @@ pub fn run() -> Result<(), String> {
                         skip_cloud_network,
                     )) => {
                         let picked = Instant::now();
+                        // 파일명이 0건이면 색인 상태를 읽어(변경 없음) '없음'과 '못 찾아봄'을 구분한다.
+                        let report_coverage = |found: usize| {
+                            if found == 0 {
+                                let status = ktm::backend::pipe_names_status(&pipe_name);
+                                let coverage = ktm::notice::name_coverage(
+                                    status.as_ref().map_err(String::as_str),
+                                );
+                                let _ = tx.send(Reply::Coverage(g, coverage));
+                            }
+                        };
                         if tab == Tab::All {
                             // Only the opt-in adapter queues All as one job. The legacy
                             // path continues to queue the original three independent jobs.
                             let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            let _ = ktm::backend::unified::stream(max_results, &cancel, |kind, top| {
+                            let session = ktm::backend::unified::collect(max_results, &cancel, |kind, top| {
                                 use ktm::backend::unified::{source, Source};
                                 let source = source(kind, related_queries, pipe_mode);
                                 if source == Source::NamesRelated {
-                                    return ktm::backend::pipe_names_related(&pipe_name, &q, top);
+                                    let answer = if top == 0 {
+                                        ktm::backend::pipe_names_snapshot(&pipe_name, &q, sort, true)?
+                                    } else {
+                                        ktm::backend::pipe_names_related(&pipe_name, &q, top)?
+                                    };
+                                    report_coverage(answer.rows.len());
+                                    return Ok(answer);
                                 }
                                 if source == Source::Names {
                                     let (text, dates) = ktm::backend::unified::names_query(&q, date_range, folder.as_deref(), ext.as_deref());
-                                    let mut rows = ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)?;
+                                    let mut rows = if top == 0 {
+                                        ktm::backend::pipe_names_snapshot(&pipe_name, &text, sort, false)?.rows
+                                    } else { ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)? };
+                                    report_coverage(rows.len());
                                     ktm::backend::unified::filter_name_dates(&mut rows, dates);
                                     return Ok(Answer { rows,
                                         terms: ktm::backend::unified::query_terms(&q),
@@ -4317,7 +4435,7 @@ pub fn run() -> Result<(), String> {
                                         ..Answer::default() });
                                 }
                                 let hierarchy = kind == tm_state::ResultKind::Hierarchy;
-                                if source == Source::ContentPipe {
+                                if source == Source::ContentPipe && top != 0 {
                                     let text = ktm::backend::unified::scoped_query(&q, date_range, folder.as_deref(), ext.as_deref(), match_mode);
                                     let rows = ktm::backend::pipe_search_limit(&pipe_name, &text, hierarchy, top)?;
                                     return Ok(Answer { rows,
@@ -4326,6 +4444,11 @@ pub fn run() -> Result<(), String> {
                                         ..Answer::default() });
                                 }
                                 if backend.is_none() { backend = Some(open(&root)?); }
+                                if top == 0 {
+                                    return backend.as_mut().unwrap().search_snapshot(
+                                        &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
+                                        Some(cancel.clone()), skip_cloud_network);
+                                }
                                 backend.as_mut().unwrap().search_with_scope_ext_limit_cloud(
                                     &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
                                     top, Some(cancel.clone()), skip_cloud_network,
@@ -4334,18 +4457,29 @@ pub fn run() -> Result<(), String> {
                                 let _ = tx.send(Reply::Unified(g, snapshot, start, WorkTimes { picked, done: Instant::now() }));
                                 PostMessageW(handle as HWND, READY, 0, 0);
                             });
+                            if let Ok(session) = session {
+                                if !cancel.load(Ordering::Relaxed) {
+                                    let _ = tx.send(Reply::UnifiedSession(g, session));
+                                    PostMessageW(handle as HWND, READY, 0, 0);
+                                }
+                            }
                             continue;
                         }
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
-                                if related_queries { return ktm::backend::pipe_names_related(&pipe_name,&q,max_results); }
+                                if related_queries {
+                                    let answer = ktm::backend::pipe_names_related(&pipe_name, &q, max_results)?;
+                                    report_coverage(answer.rows.len());
+                                    return Ok(answer);
+                                }
                                 let rows = ktm::backend::pipe_names_limit(
                                     &pipe_name,
                                     &q,
                                     sort,
                                     max_results,
                                 )?;
+                                report_coverage(rows.len());
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
                                 return Ok(Answer {
                                     rows,
@@ -4562,6 +4696,12 @@ pub fn run() -> Result<(), String> {
 
         if let Some(output) = arg("--unified-measure") {
             probe::unified_measure(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-pages") {
+            probe::unified_pages(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-loading") {
+            probe::unified_loading(h, std::path::Path::new(&output))?;
         }
 
         let mut msg: MSG = std::mem::zeroed();

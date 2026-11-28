@@ -116,6 +116,9 @@ unsafe fn setup(h: HWND, name: &str) {
             u.hotkey_error.clear();
             u.within_open = false;
             u.timing = None;
+            u.elapsed_secs = None;
+            u.coverage = None;
+            u.hidden_by_settings = false;
         });
         let long_query = (1..=4).map(|i|format!("{i}번 아주 긴 한글 검색어와 공사 계약 안전관리계획 ").repeat(4)).collect::<Vec<_>>().join("; ");
         let query = match name {
@@ -151,6 +154,7 @@ unsafe fn setup(h: HWND, name: &str) {
             }
             u.terms = vec!["예산".into()];
             u.timing = Some(Instant::now());
+            u.elapsed_secs = Some(0.01);
         };
         edit(|u| {
             u.state.recent_queries = vec!["예산".into(), "공사 계약".into(), "안전관리계획".into()];

@@ -466,7 +466,7 @@ pub fn main() {
         std::fs::create_dir_all(&idx).unwrap();
         let pname = format!("\\\\.\\pipe\\FN1Bench.{}", std::process::id());
         let child = std::process::Command::new(exe)
-            .args(["--user", "--index-root"])
+            .args(["--user", "--no-auto-names", "--index-root"])
             .arg(&idx)
             .args(["--pipe-name", &pname])
             .spawn()
