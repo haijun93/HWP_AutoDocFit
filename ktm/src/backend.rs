@@ -1899,7 +1899,7 @@ mod tests {
         assert!(rows.iter().all(|r| r.snippet.is_empty() && r.snippet_tried));
         let e = decode_names(br#"{"ok":false,"error":"names index unavailable (building)"}"#)
             .unwrap_err();
-        assert!(e.contains("준비하는 중"));
+        assert!(e.contains("만드는 중"));
         assert_eq!(format_size(0), "0 B");
         assert_eq!(format_size(1023), "1023 B");
         assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
