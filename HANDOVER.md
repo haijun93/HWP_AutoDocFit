@@ -515,6 +515,7 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 
 ---
 
+- **릴리스 브랜치 이름과 푸시 순서(2026-11-28)**: Windows 빌드(`build-windows-exe.yml`)는 `release/v*-int` 이름의 푸시만 시작한다(`paths-ignore`: README·HANDOVER·`releases/**`만 바뀐 푸시는 건너뜀). 이름을 잘못 지어(`release/v2.2.119`) 먼저 푸시하면 그 커밋은 이미 원격에 있는 것으로 보여, 이름을 고쳐 다시 푸시해도(`release/v2.2.119-int`) CI가 시작되지 않는다. 처음부터 `release/vX.Y.Z-int`로 푸시하고, 실수했다면 소스 파일을 건드리는 새 커밋을 얹어 푸시한다. 이 환경(Claude)의 GitHub 연동은 `workflow_dispatch` 실행 권한이 없다(403).
 - **Flutter UI는 웹 빌드다(2026-11-19)**: `flutter build web`(WebView 호스팅)이라 `dart:io`·`dart:html`·`dart:ffi`를 import하면 `flutter test`(VM)와 `flutter analyze`는 통과해도 CI 웹 빌드가 깨진다. 프로세스·파일·파이프 같은 OS 기능은 Python 백엔드 API로 호출한다(DOCK4 사례).
 - **CI는 `flutter analyze`의 info도 실패로 본다**: 불필요한 import 한 줄로 v2.2.75 첫 빌드가 실패했다. 워커 보고에 `flutter analyze` 종료코드 1이 있으면 병합하지 않는다.
 - **전체 Python 시험은 한 번에 하나, 별도 폴더에서**: 15~25분 걸리고, 다른 컴파일·시험과 겹치면 속도 시험이 거짓 실패하며 60분 넘게 걸린다. 시험이 도는 폴더에서 브랜치를 바꾸거나 파일을 건드리면 결과가 무효가 된다.
