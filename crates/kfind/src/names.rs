@@ -207,6 +207,15 @@ impl NamesService {
                 }
             }
         }
+        // 하나도 읽지 못한 색인을 ready로 두면 모든 질의가 오류 없이 0건이 된다(QMSBUG1).
+        // 읽을 수 있는데 비어 있는 대상(오류 note 없음)은 실패가 아니다.
+        if vols.iter().all(|v| v.entries == 0) && (vols.is_empty() || vols.iter().any(|v| v.note.is_some())) {
+            let notes: Vec<String> = vols
+                .iter()
+                .filter_map(|v| v.note.as_ref().map(|n| format!("{}: {n}", v.name)))
+                .collect();
+            return Err(format!("names build indexed nothing ({})", notes.join("; ")).into());
+        }
         let mut names = b.finish();
         for (vol, _, j) in &journals {
             names.set_journal(*vol, j.id, j.next_usn);
