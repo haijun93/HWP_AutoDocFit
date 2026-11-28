@@ -33,6 +33,7 @@ const SCENARIOS: &[&str] = &[
     "23_date_year",
     "24_error_incomplete",
     "25_long_labels",
+    "26_preview",
 ];
 
 fn rows() -> Vec<Row> {
@@ -126,7 +127,7 @@ unsafe fn setup(h: HWND, name: &str) {
             "03_results" | "05_date_7d" | "06_date_30d" | "07_ext_pdf" | "08_options_open" | "09_autocomplete"
             | "12_stats" | "13_stats_history" | "14_settings" | "15_sidebar" | "16_grid" | "17_collapsed"
             | "19_within_open" | "20_status_text" | "10_error" | "11_searching" | "22_date_today" | "23_date_year"
-            | "24_error_incomplete" => "예산",
+            | "24_error_incomplete" | "26_preview" => "예산",
             "21_mixed_names" => "budget 예산",
             "04_related_chips" => "예산; 공사 계약; 안전관리계획",
             "18_no_results" => "존재하지않는검색어",
@@ -175,6 +176,10 @@ unsafe fn setup(h: HWND, name: &str) {
                     u.state.autocompletes.clear();
                 }
                 "03_results" => result_phase(u),
+                "26_preview" => {
+                    result_phase(u);
+                    u.state.selected = Some(1);
+                }
                 "04_related_chips" => {
                     result_phase(u);
                     u.state.autocompletes.clear();
@@ -408,6 +413,59 @@ unsafe fn hit_code(h: HWND, x: i32, y: i32) -> isize {
     }
 }
 
+/// 실행 중에 바꾼 테마가 바로 반영되는지 확인한다. 쓰는 파일은 캡처 폴더 안의 것뿐이다
+/// (`--app-settings`로 받은 파일은 읽기만 한다).
+unsafe fn theme_checks(h: HWND, dir: &Path) -> Vec<String> {
+    unsafe {
+        use ui_theme::Kind;
+        if ui_theme::high_contrast_on() {
+            return vec!["SKIP 테마 검사: 고대비 켜짐".into()];
+        }
+        let mut log = Vec::new();
+        let mut check = |name: &str, ok: bool| {
+            log.push(format!("{} {name}: kind={:?}", if ok { "PASS" } else { "FAIL" }, ui_theme::theme().kind));
+        };
+        let app = dir.join(".theme-check.json");
+        let previous = edit(|u| {
+            u.forced_theme = None;
+            u.settings.ui_theme = "system".into();
+            u.app_settings.replace(app.clone())
+        });
+        let message = RegisterWindowMessageW(wide(ui_theme::CHANGED_MESSAGE_NAME).as_ptr());
+        let mut followed = true;
+        for (mode, kind) in [("light", Kind::Light), ("dark", Kind::Dark), ("light", Kind::Light)] {
+            followed &= std::fs::write(&app, format!("{{\"theme_mode\":\"{mode}\"}}")).is_ok();
+            SendMessageW(h, message, 0, 0);
+            followed &= ui_theme::theme().kind == kind;
+        }
+        check("테마 알림 반영", followed);
+
+        // 설정 창 첫 줄(테마)을 누르면 '앱 설정 따름' → '밝게' → '어둡게'.
+        edit(|u| {
+            u.modal = Some(ktm::layout::ModalKind::Settings);
+            u.modal_tab = 0;
+        });
+        let mut r: RECT = std::mem::zeroed();
+        GetClientRect(h, &mut r);
+        let content = ktm::layout::modal_rects(r.right, r.bottom, 4).content;
+        let (x, y) = (content.left + 10, content.top + scale(h, 38) / 2);
+        click(h, x, y);
+        let light = ui_theme::theme().kind == Kind::Light;
+        click(h, x, y);
+        check("설정 창 테마 즉시 반영", light && ui_theme::theme().kind == Kind::Dark);
+        edit(|u| u.modal = None);
+
+        toggle_theme(h);
+        let path = with(|u| u.settings_path.clone());
+        let saved = Settings::load(&path).map(|s| s.ui_theme).unwrap_or_default();
+        check("Ctrl+L 테마 저장", saved == "light" && ui_theme::theme().kind == Kind::Light);
+
+        edit(|u| u.app_settings = previous);
+        let _ = std::fs::remove_file(&app);
+        log
+    }
+}
+
 /// 실제 창 프로시저로 가짜 클릭·히트 테스트를 보내 단추가 작동하는지 확인한다.
 unsafe fn interaction_checks(h: HWND) -> Vec<String> {
     unsafe {
@@ -547,6 +605,7 @@ pub unsafe fn run(h: HWND, dir: &Path, dpi: i32, scenario: &str) -> Result<(), S
         }
         setup(h, "03_results");
         report.extend(interaction_checks(h));
+        report.extend(theme_checks(h, dir));
         std::fs::write(dir.join(format!("capture-report_{dpi}dpi.txt")), report.join("\n")).map_err(|e| e.to_string())?;
         if report.iter().any(|line|line.starts_with("FAIL")) { return Err("캡처 상호작용 검사 실패".into()); }
         Ok(())

@@ -125,6 +125,10 @@ impl Palette {
             (rgb(0x4F, 0x58, 0x91), 0x00FFFFFF),
             (rgb(0x83, 0x46, 0x5A), 0x00FFFFFF),
         ];
+        // 고대비(`selected_text` 있음)는 묶음 색 대신 시스템 선택 색만 쓴다.
+        if let Some(text) = self.selected_text {
+            return (self.selected, text);
+        }
         if dark { DARK[index % 8] } else { LIGHT[index % 8] }
     }
 
@@ -479,6 +483,9 @@ mod tests {
         assert_eq!((p.bg, p.text, p.selected, p.accent, p.text_faint), (0, 0x00FFFFFF, 0x00FFFF00, 0x0000FFFF, 0x0000FF00));
         assert_eq!(p.row_text(true, p.number), 0);
         assert_eq!(p.row_text(false, p.number), 0x0000FFFF);
+        for i in 0..8 {
+            assert_eq!(p.group_highlight(i, false), (sys.highlight, sys.highlight_text));
+        }
         // 검정 바탕 고대비 테마: 겹쳐 그리는 쌍이 모두 읽힌다.
         assert!(p.min_contrast() >= 4.5, "{}", p.min_contrast());
         assert_eq!(Palette::of(Kind::HighContrast, &sys), p);
