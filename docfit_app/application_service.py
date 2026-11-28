@@ -317,8 +317,9 @@ class ApplicationService:
                 pages=payload.get('pages'), degrees=payload.get('degrees'), sources=payload.get('sources')))
         if method == 'outliner':
             from .outliner_service import OutlinerService
-            if getattr(self, '_outliner_service', None) is None:
-                self._outliner_service = OutlinerService(self.store._path.parent, settings=self.store)
+            with self.lock:
+                if getattr(self, '_outliner_service', None) is None:
+                    self._outliner_service = OutlinerService(self.store._path.parent, settings=self.store)
             payload = args[0]
             if not isinstance(payload, dict):
                 raise ServiceError('INVALID_INPUT', '아웃라이너 입력을 확인해 주세요.')

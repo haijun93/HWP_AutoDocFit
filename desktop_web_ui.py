@@ -116,6 +116,8 @@ def _real_gui(gui):
 class DesktopWebBridge:
     """WebView에서 호출하는 API. 모든 Tk 접근은 Tk 이벤트 루프에 위임한다."""
 
+    _outliner_init_lock = threading.RLock()
+
     def __init__(self, gui):
         self.gui = gui
         from docfit_app.native_file_dialog_service import NativeFileDialogService
@@ -173,6 +175,11 @@ class DesktopWebBridge:
 
     def _shutdown(self):
         """Tk 종료 시 대기·실행 중 요청의 호출자를 종료 오류로 해제한다."""
+        with self._outliner_init_lock:
+            self._closed = True
+            outliner = getattr(self, '_outliner_service', None)
+        if outliner is not None:
+            outliner.close()
         with self._close_lock:
             self._cancel_close_timer()
         manager = getattr(self.gui, '_job_manager', None)
@@ -2457,10 +2464,13 @@ class DesktopWebBridge:
     def outliner(self, payload):
         """아웃라이너 명령."""
         from docfit_app.api_contract import ServiceError
-        service = getattr(self, "_outliner_service", None)
-        if service is None:
-            from docfit_app.outliner_service import OutlinerService
-            service = self._outliner_service = OutlinerService(self._settings_store()._path.parent, settings=self._settings_store())
+        with self._outliner_init_lock:
+            if getattr(self, '_closed', False):
+                raise ServiceError('OUTLINER_ENGINE_CLOSED', '앱이 종료 중입니다.')
+            service = getattr(self, "_outliner_service", None)
+            if service is None:
+                from docfit_app.outliner_service import OutlinerService
+                service = self._outliner_service = OutlinerService(self._settings_store()._path.parent, settings=self._settings_store())
         if not isinstance(payload, dict):
             raise ServiceError("INVALID_INPUT", "아웃라이너 입력을 확인해 주세요.")
         return self._service_response(lambda: service.execute(payload))

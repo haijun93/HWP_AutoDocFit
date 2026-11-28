@@ -16,15 +16,27 @@ from .package_integrity import missing_window_message
 
 UI_MODES = ('flutter', 'native')
 UI_SETTING = 'outliner_ui'
+_DEFAULT_RUNNER = subprocess.run
 
 
 class OutlinerService:
     def __init__(self, data_root, executable=None, runner=subprocess.run, settings=None,
-                 native_executable=None, launcher=subprocess.Popen):
+                 native_executable=None, launcher=subprocess.Popen, *, persistent=None,
+                 popen=subprocess.Popen, engine_timeout=30, runtime_parent=None):
         self.root = (Path(data_root) / 'Outliner').resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.executable = Path(executable) if executable else self._find_executable()
         self.runner = runner
+        self.engine_timeout = engine_timeout
+        self._closed = threading.Event()
+        # Custom runners retain the existing single-shot contract unless the
+        # caller explicitly opts into the streaming transport.
+        self._transport = None
+        use_persistent = persistent if persistent is not None else runner is _DEFAULT_RUNNER
+        if use_persistent:
+            from .outliner_engine import OutlinerEngine
+            self._transport = OutlinerEngine(self.executable, runner=runner, popen=popen,
+                                             timeout=engine_timeout, runtime_parent=runtime_parent)
         # 화면 방식 설정('flutter' 기본 | 'native')과 Win32 창(outliner_win.exe) 실행. 기능은 전부 Rust 창이 맡고 여기는 켜기만 한다.
         self.settings = settings
         self._native_executable = Path(native_executable) if native_executable else None
@@ -106,9 +118,16 @@ class OutlinerService:
     def _engine(self, request):
         if not self.executable.is_file():
             raise ServiceError('OUTLINER_ENGINE_MISSING', '아웃라이너 엔진을 찾을 수 없습니다.')
+        if self._transport is not None:
+            value = self._transport.request(request)
+            if not value['ok']:
+                error = value['error']
+                raise ServiceError(str(error.get('code', 'OUTLINER_FAILED')),
+                                   str(error.get('message', '요청에 실패했습니다.')))
+            return value['result']
         try:
             result = self.runner([str(self.executable)], input=json.dumps(request, ensure_ascii=False) + '\n',
-                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True, encoding='utf-8', timeout=30, check=False)
+                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), capture_output=True, text=True, encoding='utf-8', timeout=self.engine_timeout, check=False)
             value = json.loads(result.stdout)
         except (OSError, subprocess.TimeoutExpired, ValueError):
             raise ServiceError('OUTLINER_ENGINE_FAILED', '아웃라이너 엔진을 실행하지 못했습니다.') from None
@@ -119,9 +138,16 @@ class OutlinerService:
             raise ServiceError(str(error.get('code', 'OUTLINER_FAILED')), str(error.get('message', '요청에 실패했습니다.')))
         return value.get('result')
 
+    def close(self):
+        self._closed.set()
+        if self._transport is not None:
+            self._transport.close()
+
     def execute(self, payload):
         action = payload.get('action')
         with self._lock:
+            if self._closed.is_set():
+                raise ServiceError('OUTLINER_ENGINE_CLOSED', '아웃라이너 엔진이 종료되었습니다.')
             if action == 'ui_mode':
                 return self._ui_mode(payload)
             if action == 'open_native':
@@ -157,8 +183,9 @@ class OutlinerService:
                             'preview': False,
                         }
                     })
-                except ServiceError:
-                    target.rename(source)
+                except ServiceError as error:
+                    if error.code != 'OUTLINER_ENGINE_UNCERTAIN':
+                        target.rename(source)
                     raise
                 self._rename_history.append({'old': source.stem, 'new': target.stem})
                 loaded = self._load(target.stem)
@@ -188,8 +215,9 @@ class OutlinerService:
                             'preview': False,
                         }
                     })
-                except ServiceError:
-                    target.rename(source)
+                except ServiceError as error:
+                    if error.code != 'OUTLINER_ENGINE_UNCERTAIN':
+                        target.rename(source)
                     raise
                 self._rename_history.pop()
                 return self._load(target.stem)
