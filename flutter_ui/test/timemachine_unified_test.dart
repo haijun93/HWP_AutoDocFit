@@ -317,6 +317,39 @@ void main() {
     expect(find.text('이 기간에 기록된 파일이 없습니다.'), findsOneWidget);
   });
 
+  testWidgets('통합 검색 기본 기간은 전체이고, 3탭의 기본 기간(이번 달)은 그대로다', (tester) async {
+    final api = _Api(unified: true);
+    await _pumpScreen(tester, api);
+    final label = find.descendant(
+        of: find.byKey(const ValueKey('tm-period-dropdown')), matching: find.text('기간 없음 (전체)'));
+    expect(label, findsOneWidget);
+    await _type(tester, '예산');
+    expect(api.of('unified_start').last.containsKey('start'), isFalse);
+    expect(api.of('unified_start').last.containsKey('end'), isFalse);
+    // 타임라인(3탭 기본)은 여전히 이번 달을 읽는다.
+    final now = DateTime.now();
+    expect(api.of('range').last['start'], DateTime(now.year, now.month).millisecondsSinceEpoch / 1000);
+
+    await tester.tap(find.byKey(_toggle));
+    await _settle(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await _type(tester, '예산 집행');
+    await tester.pumpAndSettle();
+    expect(api.of('content_search').last['start'], DateTime(now.year, now.month).millisecondsSinceEpoch / 1000);
+  });
+
+  testWidgets('파일명 검색이 실패해도 위계·본문 결과를 보이고 실패를 따로 알린다', (tester) async {
+    final api = _Api(unified: true)
+      ..polls = [_page(_first.sublist(1), totals: [0, 1, 1], errors: ['파일명 전수 조회: 서비스에 연결할 수 없습니다'])];
+    await _pumpScreen(tester, api);
+    await _type(tester, '예산');
+    expect(find.text('위계 일치'), findsOneWidget);
+    expect(find.text('본문 일치'), findsOneWidget);
+    expect(find.textContaining('파일명 검색에 실패했습니다.'), findsOneWidget);
+    expect(_text(tester, 'tm-unified-totals'), '확인한 결과 · 파일명 검색 못함 · 위계 1 · 본문 1');
+  });
+
   testWidgets('종류·기간 조건을 함께 보내고 바뀌면 다시 찾는다', (tester) async {
     final api = _Api(unified: true);
     await _pumpScreen(tester, api);
@@ -325,9 +358,21 @@ void main() {
     await tester.tap(find.widgetWithText(FilterChip, 'hwpx'));
     await _settle(tester);
     await tester.pumpAndSettle();
-    final request = api.of('unified_start').last;
+    var request = api.of('unified_start').last;
     expect(request['kinds'], ['hwp']);
+    expect(request.containsKey('start'), isFalse);
+
+    // 통합 보기에서 기간을 고르면 그 기간으로 다시 찾는다.
+    final searches = api.of('unified_start').length;
+    await tester.tap(find.byKey(const ValueKey('tm-period-dropdown')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('이번 달').last);
+    await _settle(tester);
+    await tester.pumpAndSettle();
+    expect(api.of('unified_start').length, greaterThan(searches));
+    request = api.of('unified_start').last;
     expect(request['start'], isA<double>());
+    expect(request['end'], isA<double>());
   });
 
   testWidgets('화면을 닫으면 조회를 멈추고 세션을 놓는다', (tester) async {

@@ -196,7 +196,7 @@ class UnifiedSearchController extends ChangeNotifier {
     } else {
       // 보이는 페이지는 남기고 실패만 알린다.
       final message = result is Map ? result['message'] : response['message'];
-      errors = ['${message ?? '다음 결과를 받지 못했습니다. 다시 검색해 주세요.'}'];
+      errors = {...errors, '${message ?? '다음 결과를 받지 못했습니다. 다시 검색해 주세요.'}'}.toList();
       _notify();
     }
   }
@@ -275,6 +275,8 @@ class UnifiedResultsView extends StatelessWidget {
   Widget _body(BuildContext context) {
     final theme = Theme.of(context);
     final totals = controller.totals;
+    // 호스트의 오류는 '파일명 …: 사유'처럼 실패한 원천 이름으로 시작한다.
+    final namesFailed = controller.errors.any((error) => error.startsWith('파일명'));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -285,7 +287,9 @@ class UnifiedResultsView extends StatelessWidget {
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             // 검색하지 못한 것을 '0 · 0 · 0'으로 적지 않는다. 일부 실패면 확인한 수임을 밝힌다.
             if (totals != null && totals.length == 3 && controller.summary != '검색 못함')
-              Text('${controller.errors.isEmpty ? '' : '확인한 결과 · '}파일명 ${totals[0]} · 위계 ${totals[1]} · 본문 ${totals[2]}',
+              Text('${controller.errors.isEmpty ? '' : '확인한 결과 · '}'
+                  '파일명 ${!namesFailed ? totals[0] : totals[0] == 0 ? '검색 못함' : '${totals[0]}(일부)'}'
+                  ' · 위계 ${totals[1]} · 본문 ${totals[2]}',
                   key: const ValueKey('tm-unified-totals'), style: const TextStyle(fontSize: 12)),
             if (controller.searching) ...[
               const SizedBox(width: 60, child: LinearProgressIndicator()),
@@ -298,7 +302,9 @@ class UnifiedResultsView extends StatelessWidget {
           Padding(
             key: const ValueKey('tm-unified-partial'),
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text('일부만 검색했습니다. ${controller.errors.join(' / ')}',
+            child: Text(
+                '${namesFailed ? '파일명 검색에 실패했습니다. 확인한 결과만 보입니다.' : '일부만 검색했습니다.'} '
+                '${controller.errors.join(' / ')}',
                 style: TextStyle(fontSize: 12, color: TimemachineColors.of(context).error)),
           ),
         Expanded(

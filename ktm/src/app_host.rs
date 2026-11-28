@@ -85,7 +85,9 @@ pub fn describe(
 ) -> (Value, String) {
     let mut error = (!errors.is_empty()).then(|| errors.join(" / "));
     // 색인이 비어 있어 못 찾은 것은 '파일명을 검색하지 못했습니다'로 알린다.
-    if found == 0 && matches!(coverage, Some(NameCoverage::NotSearched(m)) if !m.contains("준비하는 중")) {
+    // 위계·본문도 실패했으면 그 사유가 가려지지 않게 오류를 남긴다.
+    if found == 0 && errors.iter().all(|e| e.starts_with("파일명"))
+        && matches!(coverage, Some(NameCoverage::NotSearched(m)) if !m.contains("준비하는 중")) {
         error = None;
     }
     let facts = Facts {
@@ -117,7 +119,7 @@ pub fn collect(request: &Start, cancel: &Arc<AtomicBool>, mut publish: impl FnMu
     let mut backend: Option<Backend> = None;
     let coverage = std::cell::RefCell::new(None::<NameCoverage>);
     let ext = (!request.extensions.is_empty()).then(|| request.extensions.join(","));
-    let session = unified::collect(request.limit, cancel, |kind, top| {
+    let session = unified::collect_with(request.limit, cancel, true, |kind, top| {
         let mut answer = Answer::default();
         // 빈 조사 폴더를 전체 드라이브 검색으로 확대하지 않는다.
         if request.roots.is_empty() {
@@ -354,6 +356,10 @@ mod tests {
         let errors = vec!["파일명 전수 조회: 파일명 색인이 비어 있습니다.".to_owned()];
         let (note, summary) = describe(0, false, &errors, Some(&empty), false);
         assert_eq!((title(&note).as_str(), summary.as_str()), ("파일명을 검색하지 못했습니다", "검색 못함"));
+        // 파일명 색인이 비었고 하위 단도 실패하면 그 사유를 가리지 않는다.
+        let errors = vec!["파일명 전수 조회: 비어 있음".to_owned(), "위계 전수 조회: 본문 색인이 없습니다".to_owned()];
+        let (note, _) = describe(0, false, &errors, Some(&empty), false);
+        assert!(note["detail"].as_str().unwrap().contains("본문 색인이 없습니다"), "{note}");
         // 결과가 있으면 안내 대신 목록을 보인다(오류는 errors 로 따로 보인다).
         assert!(describe(3, false, &errors, None, false).0.is_null());
     }

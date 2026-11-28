@@ -445,3 +445,35 @@ fn real_index_over_service_and_candidate_limits_has_exact_ownership_and_page_uni
     drop(names);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn app_policy_keeps_hierarchy_and_body_when_names_fail_but_still_stops_on_hierarchy() {
+    let run = |failing: ResultKind| {
+        let mut calls = Vec::new();
+        let mut snapshots = Vec::new();
+        let session = unified::collect_with(
+            80,
+            &AtomicBool::new(false),
+            true,
+            |kind, top| {
+                calls.push((kind, top));
+                if kind == failing {
+                    return Err("synthetic failure".into());
+                }
+                Ok(answer(if kind == ResultKind::Body { 1..=5 } else { 1..=3 }))
+            },
+            |s| snapshots.push(s),
+        )
+        .unwrap();
+        assert_eq!(session.state, unified::SessionState::Incomplete);
+        assert_eq!(session.errors.len(), 1);
+        assert_eq!(snapshots.iter().filter(|s| s.final_part).count(), 1);
+        assert!(snapshots.last().unwrap().final_part);
+        (session.totals(), calls.len(), session.errors[0].clone())
+    };
+    let (totals, calls, error) = run(ResultKind::Names);
+    assert_eq!((totals, calls), ([0, 3, 2], 4));
+    assert!(error.starts_with("파일명"), "{error}");
+    let (totals, calls, _) = run(ResultKind::Hierarchy);
+    assert_eq!((totals, calls), ([3, 0, 0], 3));
+}

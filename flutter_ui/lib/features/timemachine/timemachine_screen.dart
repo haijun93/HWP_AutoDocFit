@@ -70,6 +70,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   TextEditingController get _search => _searchBox.text;
   // 통합 보기(파일명 > 위계 > 본문). 기본은 끔이며, 끄면 기존 3탭 그대로다.
   bool _unifiedView = false;
+  // 통합 검색 기간은 따로 둔다. 기본은 전체(null)이고, 통합 보기에서 고른 기간만 따른다.
+  DateTime? _unifiedStart, _unifiedEnd;
+  int? _unifiedCustomDays;
   late final UnifiedSearchController _unified = UnifiedSearchController(_api);
   final Set<String> _selectedKinds = {};
   String _query = '';
@@ -345,7 +348,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       setState(() { _selectedContentResult = null; _preview = null; });
       unawaited(_unified.start(query, {
         if (_selectedKinds.isNotEmpty) 'kinds': _selectedKinds.toList(),
-        ..._searchRangePayload,
+        ..._rangeArgs(_unifiedStart, _unifiedEnd),
       }));
       return null;
     }
@@ -842,10 +845,21 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Map<String, Object?> get _filters => {'roots': _settings?['roots'] ?? [],
     'kinds': _selectedKinds.isEmpty ? null : _selectedKinds.toList(), 'query': _query};
-  Map<String, Object?> get _searchRangePayload => {
-    if (_start != null && _end != null) 'start': _start!.millisecondsSinceEpoch / 1000,
-    if (_start != null && _end != null) 'end': _end!.millisecondsSinceEpoch / 1000,
+  Map<String, Object?> get _searchRangePayload => _rangeArgs(_start, _end);
+  Map<String, Object?> _rangeArgs(DateTime? start, DateTime? end) => {
+    if (start != null && end != null) 'start': start.millisecondsSinceEpoch / 1000,
+    if (start != null && end != null) 'end': end.millisecondsSinceEpoch / 1000,
   };
+  /// 기간 단추에 보이는 기간(통합 보기는 통합 검색 기간).
+  DateTime? get _shownStart => _unifiedView ? _unifiedStart : _start;
+  DateTime? get _shownEnd => _unifiedView ? _unifiedEnd : _end;
+  int? get _shownCustomDays => _unifiedView ? _unifiedCustomDays : _selectedCustomDays;
+  void _keepUnifiedRange() {
+    if (!_unifiedView) return;
+    _unifiedStart = _start;
+    _unifiedEnd = _end;
+    _unifiedCustomDays = _selectedCustomDays;
+  }
   Future<void> _refreshDays() async {
     final revision = ++_calendarRevision;
     final requestedMonth = _month;
@@ -989,6 +1003,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         _firstDay = chosen; _start = chosen; _end = chosen.add(const Duration(days: 1));
       }
       _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
+      _keepUnifiedRange();
     });
     setState(() => _month = DateTime(chosen.year, chosen.month));
     _refreshHourDensity();
@@ -1013,6 +1028,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (mode == '6m') { final first = DateTime(today.year,today.month-6,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
       if (mode == '1y') { final first = DateTime(today.year-1,today.month,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
       _firstDay = null; _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
+      _keepUnifiedRange();
     });
     await _refreshDays();
     if (_start == null || _end == null) setState(() => _days = {});
@@ -1942,18 +1958,19 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   );
 
   String get _periodSelection {
-    if (_start == null || _end == null) return 'all';
+    final start = _shownStart, end = _shownEnd;
+    if (start == null || end == null) return 'all';
     final now=DateTime.now(); final today=DateTime(now.year,now.month,now.day);
-    if (_sameDay(_start!,today) && _end == today.add(const Duration(days:1))) return 'today';
-    if (_start == _sundayStart(now) && _end == _start!.add(const Duration(days:7))) return 'week';
-    if (_start == DateTime(now.year,now.month) && _end == DateTime(now.year,now.month+1)) return 'month';
-    if (_selectedCustomDays != null) return 'custom';
+    if (_sameDay(start,today) && end == today.add(const Duration(days:1))) return 'today';
+    if (start == _sundayStart(now) && end == start.add(const Duration(days:7))) return 'week';
+    if (start == DateTime(now.year,now.month) && end == DateTime(now.year,now.month+1)) return 'month';
+    if (_shownCustomDays != null) return 'custom';
     for (final days in [7,30,90]) {
-      if (_start == today.subtract(Duration(days:days-1)) && _end == today.add(const Duration(days:1))) return '$days';
+      if (start == today.subtract(Duration(days:days-1)) && end == today.add(const Duration(days:1))) return '$days';
     }
-    if (_end == today.add(const Duration(days:1))) {
-      if (_start == DateTime(today.year,today.month-6,today.day)) return '6m';
-      if (_start == DateTime(today.year-1,today.month,today.day)) return '1y';
+    if (end == today.add(const Duration(days:1))) {
+      if (start == DateTime(today.year,today.month-6,today.day)) return '6m';
+      if (start == DateTime(today.year-1,today.month,today.day)) return '1y';
     }
     return 'custom';
   }
@@ -1963,12 +1980,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     for (final item in _periodPresets) {
       if (item.$1 == sel) return item.$2;
     }
-    if (_selectedCustomDays != null) return '$_selectedCustomDays일';
-    if (_start != null && _end != null) {
-      final last = _end!.subtract(const Duration(days: 1));
-      return _sameDay(_start!, last)
-          ? '${_start!.month}.${_start!.day}'
-          : '${_start!.month}.${_start!.day}~${last.month}.${last.day}';
+    if (_shownCustomDays != null) return '$_shownCustomDays일';
+    final start = _shownStart, end = _shownEnd;
+    if (start != null && end != null) {
+      final last = end.subtract(const Duration(days: 1));
+      return _sameDay(start, last)
+          ? '${start.month}.${start.day}'
+          : '${start.month}.${start.day}~${last.month}.${last.day}';
     }
     return '기간 없음 (전체)';
   }

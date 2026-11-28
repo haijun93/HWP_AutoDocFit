@@ -482,6 +482,18 @@ impl Session {
 pub fn collect(
     limit: usize,
     cancel: &AtomicBool,
+    fetch: impl FnMut(ResultKind, usize) -> Result<Answer>,
+    publish: impl FnMut(Snapshot),
+) -> Result<Session> {
+    collect_with(limit, cancel, false, fetch, publish)
+}
+
+/// `keep_lower_without_names`: 앱 통합 보기(INTEG119)는 파일명 원천이 실패해도 위계·본문을 보인다.
+/// 이때도 세션은 `Incomplete`이고 실패 사유가 `errors`에 남는다.
+pub fn collect_with(
+    limit: usize,
+    cancel: &AtomicBool,
+    keep_lower_without_names: bool,
     mut fetch: impl FnMut(ResultKind, usize) -> Result<Answer>,
     mut publish: impl FnMut(Snapshot),
 ) -> Result<Session> {
@@ -510,9 +522,11 @@ pub fn collect(
     let mut errors = Vec::new();
     for (kind, _) in TIERS {
         check()?;
+        let mut stop = false;
         match fetch(kind, 0) {
             Ok(answer) => batches.push((kind, answer)),
             Err(error) => {
+                stop = !(keep_lower_without_names && kind == ResultKind::Names);
                 if kind == ResultKind::Names {
                     if let Some(first) = provisional.take() {
                         batches.push((kind, first));
@@ -548,10 +562,10 @@ pub fn collect(
         publish(Snapshot {
             answer,
             completed: kind,
-            final_part: kind == ResultKind::Body || !errors.is_empty(),
+            final_part: kind == ResultKind::Body || stop,
             errors: errors.clone(),
         });
-        if !errors.is_empty() {
+        if stop {
             break;
         }
     }

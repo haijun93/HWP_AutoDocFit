@@ -140,10 +140,22 @@ fn host_streams_pages_distinguishes_failures_and_exits_with_stdin() {
     assert_eq!(page["notice"]["title"], "검색 결과가 없습니다");
     assert_eq!(page["summary"], "0개");
 
-    // 파일명 원천 실패: 하위 단을 확정하지 않고 '검색 못함'으로 알린다.
-    host.send(start(5, "예산집행", &format!(r"\\.\pipe\{unique}-none"), vec![&documents]));
+    // 파일명 원천 실패: 위계·본문 결과는 보이고 실패는 따로 알린다.
+    let missing = format!(r"\\.\pipe\{unique}-none");
+    host.send(start(5, "예산집행", &missing, vec![&documents]));
     let (_, page) = host.finish(5);
     assert_eq!(page["incomplete"], true, "{page}");
+    assert_eq!(page["totals"][0], 0, "{page}");
+    assert!(page["totals"][1].as_u64().unwrap() + page["totals"][2].as_u64().unwrap() > 0, "{page}");
+    assert!(!page["answer"]["rows"].as_array().unwrap().is_empty(), "{page}");
+    assert_eq!(page["errors"].as_array().unwrap().len(), 1, "{page}");
+    assert!(page["errors"][0].as_str().unwrap().starts_with("파일명"), "{page}");
+
+    // 파일명이 실패하고 하위 단도 0건이면 '0건'이 아니라 '검색 못함'이다.
+    host.send(start(6, "존재하지않는낱말", &missing, vec![&documents]));
+    let (_, page) = host.finish(6);
+    assert_eq!(page["incomplete"], true, "{page}");
+    assert_eq!(page["totals"], json!([0, 0, 0]), "{page}");
     assert_eq!(page["summary"], "검색 못함");
     assert_eq!(page["notice"]["title"], "검색을 완료하지 못했습니다");
 
