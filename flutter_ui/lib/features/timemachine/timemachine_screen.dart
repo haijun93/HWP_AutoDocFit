@@ -1055,7 +1055,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (mounted) setState(() => _error = '다시 훑지 못했습니다. 앱 연결을 확인해 주세요.');
     }
   }
-  Future<void> _openItem(TimemachineItem item) => _openDocument({'id': item.id});
+  Future<void> _openItem(TimemachineItem item) =>
+      _openDocument(item.id > 0 ? {'id': item.id} : {'path': item.fullPath});
   Future<void> _revealItem(TimemachineItem item) async {
     try { final response = await _api.command('reveal', {'id':item.id});
       if (response['ok'] != true && mounted) setState(() => _error = '${response['message'] ?? '폴더를 열지 못했습니다.'}');
@@ -1580,10 +1581,10 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                             final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
                             final sizeKb = (item.size / 1024).toStringAsFixed(1);
                             return InkWell(
-                              key: ValueKey('tm-file-row-${item.id}'),
-                              onTap: () => _previewContentResult(TimemachineContentResult.fromJson({
-                                'id': item.id, 'name': item.name, 'folder': item.folder,
-                                'path': '${item.folder}\\${item.name}', 'kind': item.kind,
+                              key: ValueKey('tm-file-row-${item.id > 0 ? item.id : item.fullPath}'),
+                              onTap: item.kind == 'folder' ? () {} : () => _previewContentResult(TimemachineContentResult.fromJson({
+                                if (item.id > 0) 'id': item.id, 'name': item.name, 'folder': item.folder,
+                                'path': item.fullPath, 'kind': item.kind,
                               }, query: _search.text.trim())),
                               onDoubleTap: () => _openItem(item),
                               child: Padding(
@@ -1602,7 +1603,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                                     const SizedBox(width: 12),
                                     SizedBox(
                                       width: _fileColumnWidths['size'] ?? 100,
-                                      child: Text('${sizeKb}KB', overflow: TextOverflow.ellipsis),
+                                      child: Text(item.kind == 'folder' ? '' : '${sizeKb}KB', overflow: TextOverflow.ellipsis),
                                     ),
                                     const SizedBox(width: 12),
                                     SizedBox(
@@ -1612,7 +1613,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                                     const SizedBox(width: 12),
                                     SizedBox(
                                       width: _fileColumnWidths['kind'] ?? 100,
-                                      child: Text(item.kind, overflow: TextOverflow.ellipsis),
+                                      child: Text(item.kind == 'folder' ? '폴더' : item.kind, overflow: TextOverflow.ellipsis),
                                     ),
                                   ],
                                 ),

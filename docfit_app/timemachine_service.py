@@ -1344,7 +1344,13 @@ class TimemachineService:
             return {"ok": True, "path": os.path.abspath(target), "count": len(rows)}
         if action == "file_search":
             query = payload.get("query")
-            return {"ok": True, "items": self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500), start=payload.get("start"), end=payload.get("end"))}
+            items = self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500), start=payload.get("start"), end=payload.get("end"))
+            # 이름 검색 결과에는 타임라인 항목 번호가 없다. 화면은 경로로 열고, 폴더·형식 칸은 여기서 채운다.
+            rules = Rules()
+            items = [{**item, "folder": os.path.dirname(item["path"]),
+                      "kind": "folder" if item.get("is_dir") else rules.kind(item["name"]) or ""} if item.get("path") else item
+                     for item in items]
+            return {"ok": True, "items": items}
         if action == "related_search":
             path = payload.get("path")
             query = payload.get("query")
