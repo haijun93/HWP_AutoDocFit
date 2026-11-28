@@ -104,12 +104,13 @@ class TimemachineService:
         if idle_scheduler is not None:
             self._configure_idle()
             idle_scheduler.register(_ContentIdleJob(self), every=CONTENT_IDLE_EVERY_SECONDS)
-        if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
-            self._schedule_content_refresh()
-        elif self._auto_refresh_enabled() and self._content_index_needs_work():
-            refresh_timer = threading.Timer(0.25, self._kick_auto_content_refresh)
-            refresh_timer.daemon = True
-            refresh_timer.start()
+        if idle_scheduler is not None:
+            # 앱: 색인 점검(오래된 색인이면 문단 대응 표를 통째로 다시 채울 수 있어 오래 걸린다)은 서비스를 만드는 길을
+            # 막지 않게 뒤에서 한다. 몽땅검색 화면이 첫 응답을 곧바로 받는다(2026-11-28 첫 실행이 너무 느림).
+            check = threading.Thread(target=self._startup_content_check, name="timemachine-startup-check", daemon=True)
+            check.start()
+        else:
+            self._startup_content_check()
         if idle_scheduler is not None:
             # 업데이트로 검색 서비스 색인이 비었으면(형식 변경 재구축) 앱 검색을 기다리지 않고 복구 seeding.
             # 단축키 창만 쓰는 사용자도 본문 검색이 곧 돌아오게 한다. 앱 시작을 막지 않게 별도 스레드·짧은 지연.
@@ -117,6 +118,20 @@ class TimemachineService:
             timer = threading.Timer(RECOVERY_SEED_DELAY_SECONDS, self._recover_empty_kfind)
             timer.daemon = True
             timer.start()
+
+    def _startup_content_check(self):
+        """시작 때 본문 색인이 오래됐거나 비었는지 보고 재색인을 예약한다."""
+        try:
+            if self._closing:
+                return
+            if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
+                self._schedule_content_refresh()
+            elif self._auto_refresh_enabled() and self._content_index_needs_work():
+                refresh_timer = threading.Timer(0.25, self._kick_auto_content_refresh)
+                refresh_timer.daemon = True
+                refresh_timer.start()
+        except Exception:
+            logging.getLogger(__name__).warning("몽땅검색 시작 점검 실패", exc_info=True)
 
     def _recover_empty_kfind(self):
         """검색 서비스 문서 수가 0인데 앱 내용 색인에 문서가 있으면 seeding을 시작한다(실패는 조용히 무시)."""
@@ -140,8 +155,19 @@ class TimemachineService:
                     timer.start()
                 return
             self._start_kfind_seeding()
-        except Exception:
-            pass
+        except Exception as exc:
+            # 새 검색 엔진(kfind)에 아직 닿지 않았다. 예전에는 여기서 조용히 끝나 '새 엔진 연결 대기(not_connected)'가
+            # 영원히 남았다. 앱 시작 직후에는 kfind가 아직 뜨는 중일 수 있으니 1분 간격으로 몇 번 더 시도한다.
+            tries = getattr(self, "_connect_tries", 0) + 1
+            self._connect_tries = tries
+            with self._content_lock:
+                if self._engine_state.get("engine_reason") == "not_connected":
+                    self._engine_state.update(engine_reason="kfind_unreachable")
+            logging.getLogger(__name__).info("새 검색 엔진 연결 재시도 %s/10: %s", tries, exc)
+            if tries <= 10 and not self._closing:
+                timer = threading.Timer(60, self._recover_empty_kfind)
+                timer.daemon = True
+                timer.start()
 
     @staticmethod
     def _open_file(path):

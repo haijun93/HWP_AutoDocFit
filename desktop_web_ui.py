@@ -148,12 +148,13 @@ class DesktopWebBridge:
         self._close_request = None
         self._close_timer = None
         self._freeze_tracer = None
+        self._timemachine_create_lock = threading.Lock()
         self._tk_heartbeat_after = None
         # 몽땅검색 서비스는 화면을 처음 열 때 만들어지므로, 업데이트로 검색 색인이 비었을 때의 복구 점검이
         # 앱만 켜서는 돌지 않았다(v2.2.69 후보 실기). 시작 30초 뒤 백그라운드에서 한 번 만들어 둔다.
         # 배포 앱(묶음 실행 파일)에서만: 시험이 만든 화면 연결부가 실제 사용자 폴더에 서비스를 만들지 않게.
         if getattr(sys, "frozen", False) and screen_mode.current() is None:
-            startup = threading.Timer(30, self._prepare_timemachine_service)
+            startup = threading.Timer(5, self._prepare_timemachine_service)
             startup.daemon = True
             startup.start()
         if getattr(sys, "frozen", False):
@@ -2315,16 +2316,22 @@ class DesktopWebBridge:
 
     def _timemachine_service(self):
         service = getattr(self, "_timemachine_service_instance", None)
-        if service is None:
-            from docfit_app.timemachine_service import TimemachineService
-            folder = self._settings_store()._path.parent
-            service = self._timemachine_service_instance = TimemachineService(
-                folder, feature_api=self._timemachine_send_to_feature,
-                developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
-                idle_scheduler=self._idle_scheduler(),
-                search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
-            )
-            service.content_work_busy = lambda: bool(getattr(self.gui, "running", False))
+        if service is not None:
+            return service
+        # 미리 준비하는 스레드와 화면 요청이 동시에 처음 부르면 서비스(DB 열기·색인 점검)가 두 번 만들어졌다.
+        with self._timemachine_create_lock:
+            service = getattr(self, "_timemachine_service_instance", None)
+            if service is None:
+                from docfit_app.timemachine_service import TimemachineService
+                folder = self._settings_store()._path.parent
+                service = TimemachineService(
+                    folder, feature_api=self._timemachine_send_to_feature,
+                    developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
+                    idle_scheduler=self._idle_scheduler(),
+                    search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
+                )
+                service.content_work_busy = lambda: bool(getattr(self.gui, "running", False))
+                self._timemachine_service_instance = service
         return service
 
     def _idle_scheduler(self):

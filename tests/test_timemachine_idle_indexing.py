@@ -249,6 +249,62 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
         self.assertFalse(ctx.yielded)
         self.assertTrue(service._kfind_synced)
 
+    def test_app_startup_index_check_runs_in_background_so_the_service_returns_fast(self):
+        """앱(스케줄러 있음)은 색인 점검이 오래 걸려도 서비스 생성이 막히지 않는다(몽땅검색 첫 실행이 느림, 2026-11-28)."""
+        started = threading.Event()
+        release = threading.Event()
+        from docfit_core.timemachine import content_search
+
+        original = content_search.ContentSearchIndex.needs_reindex_count
+
+        def slow_check(self_, roots=None):
+            started.set()
+            release.wait(timeout=5)
+            return 0
+
+        with patch.object(content_search.ContentSearchIndex, "needs_reindex_count", slow_check):
+            begun = time.monotonic()
+            service = self.make_service(kfind_client=FakeKfind(count=1))
+            elapsed = time.monotonic() - begun
+            try:
+                self.assertLess(elapsed, 2.0)
+                self.assertTrue(started.wait(timeout=2))
+                self.assertTrue(service.command("settings_get")["ok"])
+            finally:
+                release.set()
+                service.close()
+        self.assertIs(content_search.ContentSearchIndex.needs_reindex_count, original)
+
+    def test_unreachable_new_engine_is_retried_instead_of_staying_not_connected_forever(self):
+        class Offline(FakeKfind):
+            def stale(self, *args, **kwargs):
+                raise OSError("pipe missing")
+
+        service = self.make_service(kfind_client=Offline(count=0))
+        self.service.close()
+        self.service = service
+        service.command("settings_set", {"roots": [str(self.root)], "time_mode": "max", "enabled": True})
+        scheduled = []
+
+        class FakeTimer:
+            def __init__(self, interval, function):
+                scheduled.append((interval, function))
+                self.daemon = False
+
+            def start(self):
+                pass
+
+        with patch("docfit_app.timemachine_service.threading.Timer", FakeTimer):
+            service._recover_empty_kfind()
+        self.assertEqual([interval for interval, _ in scheduled], [60])
+        self.assertEqual(service._engine_state["engine_reason"], "kfind_unreachable")
+        # 열 번까지만 다시 시도한다.
+        service._connect_tries = 10
+        scheduled.clear()
+        with patch("docfit_app.timemachine_service.threading.Timer", FakeTimer):
+            service._recover_empty_kfind()
+        self.assertEqual(scheduled, [])
+
     def test_startup_recovery_starts_seeding_only_when_kfind_empty(self):
         """앱 시작 복구: stale 문서가 있고 내용 색인이 있을 때만 seeding 시작."""
         for count, stale_keys, expected in ((0, ["old"], 1), (3, ["old"], 1), (3, [], 0)):
