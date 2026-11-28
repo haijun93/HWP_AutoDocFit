@@ -55,7 +55,7 @@ fn run() -> Result<()> {
                 })?;
                 println!("저장된 대체 방식: {mode:?}");
                 match mode {
-                    Fallback::User => user_mode(user_index()?, kfind::PIPE_NAME),
+                    Fallback::User => user_mode(user_index()?, kfind::PIPE_NAME, true),
                     Fallback::Task => install_task(),
                 }
             }
@@ -78,10 +78,12 @@ fn run() -> Result<()> {
                 .find(|w| w[0] == "--pipe-name")
                 .and_then(|w| w[1].to_str())
                 .unwrap_or(kfind::PIPE_NAME),
+            // 시험·진단용: 시작 때 기본 폴더 파일명 색인 자동 생성을 끈다.
+            !args.iter().any(|a| a == "--no-auto-names"),
         ),
         _ => {
             println!(
-                "kfind --install | --start | --restart | --stop | --uninstall | --service | --user [--index-root DIR]\nSCM operations: [--data-root DIR]. Pipe: length-prefixed UTF-8 JSON (u32 little endian), query/cancel/status."
+                "kfind --install | --start | --restart | --stop | --uninstall | --service | --user [--index-root DIR] [--no-auto-names]\nSCM operations: [--data-root DIR]. Pipe: length-prefixed UTF-8 JSON (u32 little endian), query/cancel/status."
             );
             Ok(())
         }
@@ -93,11 +95,11 @@ fn user_index() -> Result<PathBuf> {
         .ok_or("LOCALAPPDATA unavailable")?
         .join("HwpAutoDocFit/index"))
 }
-fn user_mode(root: PathBuf, name: &str) -> Result<()> {
+fn user_mode(root: PathBuf, name: &str, auto_names: bool) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_sender, receiver) = tokio::sync::watch::channel(false);
     // 서비스 없이도 파일명 검색이 되도록 바탕 화면·문서·다운로드로 파일명 색인을 스스로 만든다.
-    let auto_roots = kfind::names::default_user_roots_from_env();
+    let auto_roots = if auto_names { kfind::names::default_user_roots_from_env() } else { Vec::new() };
     runtime.block_on(kfind::pipe::run_user(name, root, receiver, auto_roots))
 }
 fn install_task() -> Result<()> {

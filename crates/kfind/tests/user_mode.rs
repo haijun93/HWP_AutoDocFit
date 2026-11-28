@@ -37,6 +37,7 @@ async fn executable_user_mode_roundtrip() {
     let mut process = Process(
         Command::new(env!("CARGO_BIN_EXE_kfind"))
             .arg("--user")
+            .arg("--no-auto-names")
             .arg("--index-root")
             .arg(dir.path())
             .arg("--pipe-name")
@@ -107,6 +108,7 @@ async fn executable_user_mode_ingest_roundtrip() {
     let mut process = Process(
         Command::new(env!("CARGO_BIN_EXE_kfind"))
             .arg("--user")
+            .arg("--no-auto-names")
             .arg("--index-root")
             .arg(dir.path())
             .arg("--pipe-name")
