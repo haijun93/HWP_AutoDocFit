@@ -700,17 +700,34 @@ class TimemachineService:
                 return {**self.content_status(), **self._error("TM_INDEX_FAILED", f"색인 작업을 시작하지 못했습니다: {exc}")}
             return self.content_status()
 
+    # kfind `stale`의 u32::MAX 는 '파이썬 위계 문서는 낡지 않음'이라는 뜻이라 쓰면 앱 문서가 빠진다.
+    _KFIND_EVERY_DOCUMENT = 0xfffffffe
+    # `remove` 요청 하나에 담을 열쇠 크기(요청 한도 64KB의 여유분).
+    _KFIND_REMOVE_BYTES = 32 * 1024
+
     def _clear_kfind_documents(self):
         """검색 서비스(kfind)에 담긴 앱 문서('tm')를 모두 지운다. 서비스에 닿지 않으면 (0, 이유)를 돌려준다."""
-        removed = 0
+        removed, previous = 0, None
         try:
             while True:
-                page = self.kfind.stale("tm", 0xffffffff, limit=1000)
+                page = self.kfind.stale("tm", self._KFIND_EVERY_DOCUMENT, limit=1000)
                 keys = page.get("doc_keys", [])
                 if not keys:
                     return removed, None
-                self.kfind.remove(keys)
-                removed += len(keys)
+                if keys == previous:  # 지워지지 않으면 끝없이 돌지 않는다.
+                    raise KfindError("kfind_remove_stalled")
+                previous = keys
+                batch, size = [], 0
+                for key in keys:
+                    length = len(json.dumps(key, ensure_ascii=False).encode("utf-8")) + 1
+                    if batch and size + length > self._KFIND_REMOVE_BYTES:
+                        self.kfind.remove(batch)
+                        removed += len(batch)
+                        batch, size = [], 0
+                    batch.append(key)
+                    size += length
+                self.kfind.remove(batch)
+                removed += len(batch)
         except Exception as exc:  # 서비스가 꺼져 있어도 앱 색인 초기화는 진행한다.
             logging.getLogger(__name__).warning("검색 서비스 색인 지우기 실패: %s", exc)
             return removed, f"{type(exc).__name__}"
