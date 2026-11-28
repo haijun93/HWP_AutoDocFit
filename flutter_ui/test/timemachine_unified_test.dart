@@ -256,6 +256,28 @@ void main() {
     expect(find.text('현재 조사 폴더 안의 문서만 열 수 있습니다.'), findsOneWidget);
   });
 
+  testWidgets('폴더 결과는 폴더 꼬리표로 보이고 열기만 하며 미리보기를 부르지 않는다', (tester) async {
+    final folder = {..._row('예산 자료 v1.2', '파일명'), 'is_dir': true};
+    final api = _Api(unified: true)..polls = [_page([folder], totals: [1, 0, 0])];
+    await _pumpScreen(tester, api);
+    await _type(tester, '예산');
+    final path = folder['path']! as String;
+    final row = find.byKey(ValueKey('tm-unified-row-$path'));
+    expect(find.descendant(of: row, matching: find.text('폴더')), findsOneWidget);
+    expect(find.byTooltip('상위 폴더에서 보기'), findsOneWidget);
+    await tester.tap(row);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(api.of('preview'), isEmpty);
+    await tester.tap(row);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('tm-unified-open-$path')));
+    await tester.pumpAndSettle();
+    expect(api.of('open').toList(), [{'path': path}, {'path': path}]);
+  });
+
   for (final (title, summary) in [
     ('검색 결과가 없습니다', '0개'),
     ('검색을 완료하지 못했습니다', '검색 못함'),

@@ -71,10 +71,17 @@ def _open_pipe(name):
             time.sleep(0.005)
 
 
+def _forbidden_pipe(name):
+    raise FileNotFoundError("시험 중에는 설치된 색인 서비스에 연결하지 않습니다.")
+
+
 class KfindClient:
     def __init__(self, pipe_name=PIPE_NAME, *, opener=None, clock=None,
                  timeout=2.0, versions=None):
         self.pipe_name = pipe_name
+        # 시험이 설치된 서비스의 사용자 색인을 읽거나 넣고 지우지 않게 한다(격리 파이프는 그대로 연다).
+        if opener is None and pipe_name == PIPE_NAME and os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1":
+            opener = _forbidden_pipe
         self._opener = opener or _open_pipe
         self._clock = clock or time.monotonic
         if not math.isfinite(timeout) or timeout <= 0:

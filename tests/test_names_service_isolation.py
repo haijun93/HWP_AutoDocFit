@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from docfit_app import rust_scan
+from docfit_app import kfind_client, rust_scan
 
 
 class NamesServiceIsolationTests(unittest.TestCase):
@@ -15,6 +15,14 @@ class NamesServiceIsolationTests(unittest.TestCase):
                 patch("docfit_app.kfind_process.is_pipe_alive") as alive:
             self.assertIsNone(rust_scan.names_query({"pdf"}))
         alive.assert_not_called()
+
+    def test_default_index_client_cannot_reach_the_installed_service_in_tests(self):
+        with patch.dict(os.environ, {"DOCFIT_FORBID_REAL_DATA": "1"}),                 patch.object(kfind_client, "_open_pipe") as opened:
+            client = kfind_client.KfindClient()
+            for call in (client.status, lambda: client.remove(["synthetic"])):
+                with self.assertRaises(kfind_client.KfindError):
+                    call()
+        opened.assert_not_called()
 
     def test_library_scan_modules_are_isolated_when_selected_alone(self):
         # `discover -s tests -p <모듈>` 은 tests/__init__.py 를 스스로 읽지 않는다. 시험은 돌리지 않고 읽기만 한다.

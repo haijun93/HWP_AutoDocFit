@@ -4453,12 +4453,9 @@ pub fn run() -> Result<(), String> {
                                     return Ok(answer);
                                 }
                                 if source == Source::Names {
-                                    let (text, dates) = ktm::backend::unified::names_query(&q, date_range, folder.as_deref(), ext.as_deref());
-                                    let mut rows = if top == 0 {
-                                        ktm::backend::pipe_names_snapshot(&pipe_name, &text, sort, false)?.rows
-                                    } else { ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)? };
+                                    let rows = ktm::backend::unified::fetch_names(&pipe_name, &q, date_range,
+                                        folder.as_deref(), ext.as_deref(), sort, top, ext.is_none())?;
                                     report_coverage(rows.len());
-                                    ktm::backend::unified::filter_name_dates(&mut rows, dates);
                                     return Ok(Answer { rows,
                                         terms: ktm::backend::unified::query_terms(&q),
                                         groups: kfind_core::split_semicolon_groups(&q),

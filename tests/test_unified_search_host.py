@@ -243,6 +243,27 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual((self.opened, self.revealed), ([str(document)], [str(document)]))
 
 
+    def test_folder_results_are_searched_without_kind_filter_and_open_by_path_only_inside_roots(self):
+        self.service.command("unified_start", {"query": "공사"})
+        self.assertFalse(self.host.requests[-1]["files_only"])
+        self.service.command("unified_start", {"query": "공사", "kinds": ["hwp"]})
+        self.assertTrue(self.host.requests[-1]["files_only"])
+        folder = self.root / "합성 공사계약 v1.2"
+        folder.mkdir()
+        self.assertTrue(self.service.command("open", {"path": str(folder)})["ok"])
+        self.assertTrue(self.service.command("reveal", {"path": str(folder)})["ok"])
+        self.assertEqual((self.opened, self.revealed), ([str(folder)], [str(folder)]))
+        outside = Path(self.temp.name) / "밖"
+        outside.mkdir()
+        excluded = self.root / "appdata"
+        excluded.mkdir()
+        hidden = self.root / ".숨김"
+        hidden.mkdir()
+        for path in (outside, excluded, hidden):
+            self.assertFalse(self.service.command("open", {"path": str(path)})["ok"], path)
+        self.assertEqual(self.opened, [str(folder)])
+
+
 @unittest.skipUnless(os.environ.get("UNIFIED_BENCH_EXE") and os.environ.get("KTM_HOST_EXE"),
                      "실제 통합 검색 호스트 실행 파일을 지정하지 않음")
 class RealHostTests(unittest.TestCase):

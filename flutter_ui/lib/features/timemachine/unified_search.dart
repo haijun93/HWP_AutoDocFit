@@ -14,8 +14,10 @@ import 'timemachine_colors.dart';
 @immutable
 class UnifiedRow {
   const UnifiedRow({required this.path, required this.name, required this.parent, required this.tier,
-    required this.location, required this.snippet});
+    required this.location, required this.snippet, this.isDir = false});
   final String path, name, parent, tier, location, snippet;
+  /// 파일명 색인의 폴더 항목: '폴더' 꼬리표를 보이고, 열기는 그 폴더를 연다(미리보기 없음).
+  final bool isDir;
 
   factory UnifiedRow.fromJson(Map value) => UnifiedRow(
         path: '${value['path'] ?? ''}',
@@ -24,6 +26,7 @@ class UnifiedRow {
         tier: '${value['tier'] ?? ''}',
         location: '${value['location'] ?? ''}',
         snippet: '${value['snippet'] ?? ''}',
+        isDir: value['is_dir'] == true,
       );
 }
 
@@ -380,7 +383,7 @@ class UnifiedResultsView extends StatelessWidget {
               Expanded(
                 child: InkWell(
                   key: ValueKey('tm-unified-row-${row.path}'),
-                  onTap: () => onPreview(row),
+                  onTap: row.isDir ? null : () => onPreview(row),
                   onDoubleTap: () => onOpen(row),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
@@ -390,7 +393,8 @@ class UnifiedResultsView extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(color: scheme.secondaryContainer, borderRadius: BorderRadius.circular(8)),
-                        child: Text(row.tier, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSecondaryContainer)),
+                        child: Text(row.isDir ? '폴더' : row.tier,
+                            style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSecondaryContainer)),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -410,13 +414,13 @@ class UnifiedResultsView extends StatelessWidget {
               ),
               IconButton(
                 key: ValueKey('tm-unified-open-${row.path}'),
-                tooltip: '문서 열기',
+                tooltip: row.isDir ? '폴더 열기' : '문서 열기',
                 icon: const Icon(Icons.open_in_new, size: 18),
                 onPressed: () => onOpen(row),
               ),
               IconButton(
                 key: ValueKey('tm-unified-reveal-${row.path}'),
-                tooltip: '폴더 열기',
+                tooltip: row.isDir ? '상위 폴더에서 보기' : '폴더 열기',
                 icon: const Icon(Icons.folder_open, size: 18),
                 onPressed: () => onReveal(row),
               ),

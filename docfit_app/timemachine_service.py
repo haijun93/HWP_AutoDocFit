@@ -1241,6 +1241,8 @@ class TimemachineService:
             raise ValueError("선택한 종류가 적용 확장자에 없습니다.")
         generation = self.unified_host.start({
             "query": query, "roots": roots, "extensions": extensions, "dates": dates,
+            # 종류를 고르지 않았으면 폴더 이름 일치도 파일명 단에 낸다.
+            "files_only": bool(kinds),
             "exclude_dirs": sorted(EXCLUDED_DIRS),
             "related_queries": len(parse_related_query(query)) > 1,
             "paragraphs": str(Path(self._content_db).resolve())})
@@ -1449,11 +1451,17 @@ class TimemachineService:
             if not any(self._real_path_under_root(real_path, root) for root in real_roots):
                 return self._error("TM_NOT_AVAILABLE", "현재 조사 폴더 밖으로 연결된 문서입니다.")
             rules = Rules()
-            if (rules.kind(Path(path).name) not in KINDS or rules.skip_file(Path(path).name) or
-                    any(rules.skip_dir(part) for part in self._parts_under_root(path)) or
-                    (row and row["hidden"])):
+            # 통합 보기의 폴더 결과: 경로로 온 요청만 폴더를 연다(타임라인 항목 번호는 파일이다).
+            is_folder = row is None and os.path.isdir(path)
+            if is_folder:
+                rejected = any(rules.skip_dir(part) for part in (*self._parts_under_root(path), Path(path).name))
+            else:
+                rejected = (rules.kind(Path(path).name) not in KINDS or rules.skip_file(Path(path).name) or
+                            any(rules.skip_dir(part) for part in self._parts_under_root(path)) or
+                            bool(row and row["hidden"]))
+            if rejected:
                 return self._error("TM_NOT_AVAILABLE", "지원하지 않는 파일입니다.")
-            if not os.path.isfile(path):
+            if not is_folder and not os.path.isfile(path):
                 if row:
                     self.store.hide(file_id)
                 return self._error("TM_MISSING", "파일이 존재하지 않습니다. 이동하거나 삭제했는지 확인해 주세요.")

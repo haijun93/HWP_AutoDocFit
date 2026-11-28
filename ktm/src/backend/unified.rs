@@ -186,6 +186,62 @@ pub fn filter_name_dates(rows: &mut Vec<Row>, dates: Option<(i64, i64)>) {
     });
 }
 
+/// 폴더 이름만 묻는 질의(v2.2.119 폴더 이름 검색). 입력에 `ext:` 조건이 있으면 파일을 고르는 것이라
+/// 폴더를 묻지 않는다. `names_query`가 만든 묶음의 `file:`만 `folder:`로 바꾼다.
+pub fn folder_names_query(
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+) -> Option<String> {
+    let typed = kfind_core::split_semicolon_groups(query).iter().any(|group| {
+        kfind_core::parse_query_syntax(&normalize_ext_lists(group))
+            .file_types
+            .is_some_and(|types| !types.is_empty())
+    });
+    if typed {
+        return None;
+    }
+    let (files, _) = names_query(query, dates, folder, None);
+    let groups: Vec<String> = kfind_core::split_semicolon_groups(&files)
+        .iter()
+        .map(|group| format!("{} folder:", group.trim_end().trim_end_matches("file:").trim_end()))
+        .collect();
+    Some(groups.join("; "))
+}
+
+/// 통합 검색의 파일명 단: 폴더 이름 일치를 앞에, 파일 이름 일치를 뒤에 둔다. `top == 0`은 전수 조회,
+/// 아니면 합쳐서 `top`개까지다. `ext`는 파일에만 적용한다. `folders`가 false면(화면에서 종류를 고름) 파일만 묻는다.
+pub fn fetch_names(
+    pipe: &str,
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+    ext: Option<&str>,
+    sort: &str,
+    top: usize,
+    folders: bool,
+) -> Result<Vec<Row>> {
+    let ask = |text: &str| -> Result<Vec<Row>> {
+        if top == 0 {
+            Ok(super::pipe_names_snapshot(pipe, text, sort, false)?.rows)
+        } else {
+            super::pipe_names_limit(pipe, text, sort, top)
+        }
+    };
+    let mut rows = Vec::new();
+    if let Some(text) = folder_names_query(query, dates, folder).filter(|_| folders) {
+        rows = ask(&text)?;
+        rows.retain(|row| row.is_dir);
+    }
+    let (text, dates) = names_query(query, dates, folder, ext);
+    rows.extend(ask(&text)?);
+    filter_name_dates(&mut rows, dates);
+    if top != 0 {
+        rows.truncate(top);
+    }
+    Ok(rows)
+}
+
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub answer: Answer,
@@ -847,6 +903,16 @@ mod tests {
         let mut rows = vec![row("/unknown", 1)];
         filter_name_dates(&mut rows, dates);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn folder_names_are_asked_separately_unless_a_file_type_is_chosen() {
+        let text = folder_names_query("공사; 계약", None, None).unwrap();
+        assert_eq!(kfind_core::split_semicolon_groups(&text).len(), 2);
+        assert!(text.contains("folder:") && !text.contains("file:"), "{text}");
+        assert!(folder_names_query("공사 ext:hwp;pdf", None, None).is_none());
+        // 파일 질의는 전과 같이 파일만 받는다.
+        assert!(names_query("공사", None, None, None).0.ends_with("file:"));
     }
 
     #[test]

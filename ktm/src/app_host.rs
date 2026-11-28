@@ -13,6 +13,8 @@ pub struct Start {
     pub query: String,
     pub roots: Vec<String>,
     #[serde(default)] pub extensions: Vec<String>,
+    /// 화면에서 종류를 골랐으면 true: 폴더 항목을 내지 않는다.
+    #[serde(default)] pub files_only: bool,
     /// 조사 폴더 아래에서 건너뛸 폴더 이름(대소문자 무시).
     #[serde(default)] pub exclude_dirs: Vec<String>,
     /// YYYYMMDD 시작·끝(둘 다 포함).
@@ -65,6 +67,16 @@ fn allowed(path: &str, roots: &[String], extensions: &[String], exclude_dirs: &[
                 part.starts_with('.') || exclude_dirs.iter().any(|d| d.to_lowercase() == *part)
             })
     })
+}
+
+/// 폴더 항목: 조사 폴더 안이어야 하고, 자신의 이름도 제외 폴더·점 폴더가 아니어야 한다.
+/// `extensions`(앱의 적용 확장자 목록)는 파일에만 적용한다.
+fn allowed_folder(path: &str, roots: &[String], exclude_dirs: &[String]) -> bool {
+    let key = unified::path_key(path);
+    let name = key.rsplit('\\').next().unwrap_or("");
+    allowed(path, roots, &[], exclude_dirs)
+        && !name.starts_with('.')
+        && !exclude_dirs.iter().any(|d| d.to_lowercase() == name)
 }
 
 /// 수집한 세션과 화면 안내에 필요한 사실.
@@ -126,27 +138,29 @@ pub fn collect(request: &Start, cancel: &Arc<AtomicBool>, mut publish: impl FnMu
             return Ok(answer);
         }
         if kind == ResultKind::Names {
-            // 연관 검색은 질의 전체가 200자 이하여야 해서 묶음마다 붙는 폴더·확장자 조건을 빼고
-            // 한 번만 묻는다. 범위는 아래에서 거른다.
+            // 연관 검색(`;`)의 서비스 문법은 `file:`·`path:` 같은 조건을 낱말로 읽고 질의가 200자
+            // 이하여야 해서, 입력을 그대로 한 번만 묻는다. 범위는 아래에서 거른다.
             let scopes: Vec<Option<&str>> = if request.related_queries {
                 vec![None]
             } else {
                 request.roots.iter().map(|root| Some(root.as_str())).collect()
             };
-            let ext = ext.as_deref().filter(|_| !request.related_queries);
             for folder in scopes {
                 if cancel.load(Ordering::Relaxed) { return Err("검색 취소".into()); }
-                let (text, dates) = unified::names_query(&request.query, request.dates, folder, ext);
-                let mut part = if top == 0 {
-                    backend::pipe_names_snapshot(&request.pipe, &text, &request.sort, request.related_queries)?
-                } else if request.related_queries {
-                    backend::pipe_names_related(&request.pipe, &text, top)?
+                let part = if request.related_queries {
+                    let mut part = if top == 0 {
+                        backend::pipe_names_snapshot(&request.pipe, &request.query, &request.sort, true)?
+                    } else {
+                        backend::pipe_names_related(&request.pipe, &request.query, top)?
+                    };
+                    unified::filter_name_dates(&mut part.rows, request.dates);
+                    part
                 } else {
-                    Answer { rows: backend::pipe_names_limit(&request.pipe, &text, &request.sort, top)?,
+                    Answer { rows: unified::fetch_names(&request.pipe, &request.query, request.dates, folder,
+                            ext.as_deref(), &request.sort, top, !request.files_only)?,
                         terms: unified::query_terms(&request.query),
                         groups: kfind_core::split_semicolon_groups(&request.query), ..Answer::default() }
                 };
-                unified::filter_name_dates(&mut part.rows, dates);
                 answer.rows.extend(part.rows);
                 answer.terms.extend(part.terms);
                 answer.groups = part.groups;
@@ -167,7 +181,12 @@ pub fn collect(request: &Start, cancel: &Arc<AtomicBool>, mut publish: impl FnMu
         // 중첩 조사 폴더도 하나의 원천 문서로 취급한다.
         let mut seen = std::collections::HashSet::new();
         answer.rows.retain(|row| {
-            allowed(&row.path, &request.roots, &request.extensions, &request.exclude_dirs) && seen.insert(unified::path_key(&row.path))
+            let kept = if row.is_dir {
+                !request.files_only && allowed_folder(&row.path, &request.roots, &request.exclude_dirs)
+            } else {
+                allowed(&row.path, &request.roots, &request.extensions, &request.exclude_dirs)
+            };
+            kept && seen.insert(unified::path_key(&row.path))
         });
         if kind == ResultKind::Names && top != 0 { answer.rows.truncate(top); }
         // 파일명 0건은 색인 범위를 확인한다. 비어 있으면 '0건'이 아니라 '검색 못 함'이다.
@@ -197,7 +216,7 @@ pub fn answer_json(answer: &Answer) -> Value {
 
 fn row_json(r: &Row) -> Value {
     // kfind 문서 번호는 앱 타임라인 번호와 다르므로 내보내지 않는다. 앱 동작은 path 를 쓴다.
-    json!({"path":r.path, "name":r.name, "parent":r.parent,
+    json!({"path":r.path, "name":r.name, "parent":r.parent, "is_dir":r.is_dir,
         "snippet":r.snippet, "location":r.location, "level":r.level, "count":r.count,
         "tier":r.match_kinds.first().map(|k| unified::label(*k))})
 }
@@ -337,6 +356,18 @@ mod tests {
             assert!(!allowed(path, &roots, &ext, &skip), "{path}");
         }
         assert!(!allowed(r"Z:\합성\조사\문서.hwpx", &[], &ext, &skip));
+    }
+
+    #[test]
+    fn folder_rows_are_kept_inside_roots_unless_excluded() {
+        let roots = vec![r"Z:\합성\조사".to_owned()];
+        let skip = vec!["AppData".to_owned()];
+        assert!(allowed_folder(r"Z:\합성\조사\##공사계약", &roots, &skip));
+        assert!(allowed_folder(r"Z:\합성\조사\보고서 v1.2", &roots, &skip));
+        for path in [r"Z:\합성\조사\AppData", r"Z:\합성\조사\.git", r"Z:\합성\조사\appdata\하위",
+            r"Z:\합성\조사", r"Z:\합성\밖"] {
+            assert!(!allowed_folder(path, &roots, &skip), "{path}");
+        }
     }
 
     #[test]
