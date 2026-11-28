@@ -6,6 +6,7 @@ States: stopped -> ready -> busy -> ready; transport failure -> one restart
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import queue
 import shutil
@@ -24,6 +25,34 @@ READ_ONLY = frozenset({
     'resolve_block_ref', 'block_ref', 'block_backlinks',
     'check_page_references', 'page_references',
 })
+
+
+PREFIX = 'docfit-outliner-'
+# 살아 있는 앱이 열어 둔 표식 파일. Windows 는 열린 파일을 지울 수 없어 주인 확인에 쓴다.
+OWNER = 'owner.lock'
+_UNMARKED_GRACE = 3600
+
+
+def sweep_stale(parent, executable_name):
+    """강제 종료로 남은 임시 실행 사본을 지운다.
+
+    주인이 살아 있거나 우리가 만들지 않은 파일이 든 폴더는 건드리지 않는다.
+    """
+    if os.name != 'nt':  # 다른 OS 는 열린 파일도 지워져 주인을 알 수 없다.
+        return
+    for folder in Path(parent or tempfile.gettempdir()).glob(PREFIX + '*'):
+        try:
+            names = {item.name for item in folder.iterdir()}
+            if not names <= {OWNER, executable_name}:
+                continue
+            if OWNER in names:
+                (folder / OWNER).unlink()  # 주인이 살아 있으면 PermissionError
+            elif time.time() - folder.stat().st_mtime < _UNMARKED_GRACE:
+                continue  # 지금 막 만드는 중일 수 있다.
+            (folder / executable_name).unlink(missing_ok=True)  # 실행 중이면 남긴다.
+            folder.rmdir()
+        except OSError:
+            continue
 
 
 class _TransportError(Exception):
@@ -74,6 +103,9 @@ def _stop(resources):
 
 def _dispose(resources):
     _stop(resources)
+    owner = resources.pop('owner', None)
+    if owner is not None:
+        owner.close()
     directory = resources.pop('directory', None)
     if directory is not None:
         # Windows may signal process exit just before releasing its image map.
@@ -111,8 +143,10 @@ class OutlinerEngine:
         if self._closed.is_set():
             raise _TransportError()
         if 'directory' not in self._resources:
-            directory = tempfile.TemporaryDirectory(prefix='docfit-outliner-', dir=self.runtime_parent)
+            sweep_stale(self.runtime_parent, self.executable.name)
+            directory = tempfile.TemporaryDirectory(prefix=PREFIX, dir=self.runtime_parent)
             self._resources['directory'] = directory
+            self._resources['owner'] = open(Path(directory.name) / OWNER, 'wb')
             # Finalizers run newest first at interpreter exit. Re-register ours
             # AFTER TemporaryDirectory's so the child exits before image deletion.
             self._finalizer.detach()
@@ -124,6 +158,8 @@ class OutlinerEngine:
         process = self.popen(
             [str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding='utf-8', close_fds=True,
+            # 앱의 작업 폴더(설치 폴더일 수 있음)를 물려받아 붙잡지 않는다.
+            cwd=self._resources['directory'].name,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         self._resources['process'] = process

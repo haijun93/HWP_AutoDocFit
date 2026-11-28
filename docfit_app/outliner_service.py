@@ -16,6 +16,9 @@ from .package_integrity import missing_window_message
 
 UI_MODES = ('flutter', 'native')
 UI_SETTING = 'outliner_ui'
+# 상주 엔진 끄기: 설정 값 false 또는 환경 변수 0. 끄면 명령마다 실행하는 예전 방식이다.
+RESIDENT_SETTING = 'outliner_resident_engine'
+RESIDENT_ENV = 'DOCFIT_OUTLINER_RESIDENT'
 _DEFAULT_RUNNER = subprocess.run
 
 
@@ -32,7 +35,8 @@ class OutlinerService:
         # Custom runners retain the existing single-shot contract unless the
         # caller explicitly opts into the streaming transport.
         self._transport = None
-        use_persistent = persistent if persistent is not None else runner is _DEFAULT_RUNNER
+        use_persistent = (persistent if persistent is not None
+                          else runner is _DEFAULT_RUNNER and self._resident_enabled(settings))
         if use_persistent:
             from .outliner_engine import OutlinerEngine
             self._transport = OutlinerEngine(self.executable, runner=runner, popen=popen,
@@ -66,6 +70,18 @@ class OutlinerService:
         if self._native_executable is None:
             self._native_executable = self._find_executable('outliner_win.exe', 'outliner_win', 'outliner_win')
         return self._native_executable
+
+    @staticmethod
+    def _resident_enabled(settings):
+        if os.environ.get(RESIDENT_ENV) == '0':
+            return False
+        read = getattr(settings, 'read', None)
+        if read is None:
+            return True
+        try:
+            return read().get(RESIDENT_SETTING) is not False
+        except ServiceError:  # 설정을 못 읽어도 아웃라이너는 계속 연다.
+            return True
 
     def _ui_mode(self, payload):
         if self.settings is None:
