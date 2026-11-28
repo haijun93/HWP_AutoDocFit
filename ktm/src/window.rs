@@ -122,7 +122,10 @@ struct Ui {
     glyph: HFONT,
     glyph_big: HFONT,
     brush: HBRUSH,
-    theme: String,
+    /// `--theme` 인자로 고정한 테마. 사용자가 창에서 바꾸면 풀린다.
+    forced_theme: Option<String>,
+    /// 앱 본체 설정 파일(`theme_mode`를 읽기만 한다).
+    app_settings: Option<PathBuf>,
     tx: Arc<(Mutex<Pending>, Condvar)>,
     rx: mpsc::Receiver<Reply>,
     status: mpsc::Sender<String>,
@@ -284,22 +287,40 @@ fn palette() -> ui_theme::Palette {
     ui_theme::palette()
 }
 
-fn sync_theme(theme_str: &str) {
-    let pref = match theme_str {
-        "light" => ui_theme::ThemePref::Light,
-        "dark" => ui_theme::ThemePref::Dark,
-        _ => ui_theme::ThemePref::System,
+/// 설정·앱 설정·Windows 상태를 다시 읽어 테마를 맞춘다. 창을 열 때마다, 설정을 바꿨을 때,
+/// 테마 알림을 받았을 때 부른다. 색이 바뀌었을 때만 틀과 입력칸까지 다시 칠한다.
+unsafe fn apply_current_theme(h: HWND) {
+    let (forced, quick, app, edits) = with(|u| {
+        (u.forced_theme.clone(), u.settings.ui_theme.clone(), u.app_settings.clone(),
+         [u.edit, u.within_edit, u.days_edit])
+    });
+    let pref = match forced {
+        Some(value) => ui_theme::ThemePref::parse(&value),
+        None => ktm::theme::decide(&quick, app.as_deref().and_then(ktm::theme::app_theme_mode).as_deref()),
     };
-    #[cfg(windows)]
-    {
-        let _ = ui_theme::refresh(pref);
+    if ui_theme::refresh(pref).look {
+        unsafe {
+            frame::apply_theme(h);
+            for window in [h].into_iter().chain(edits) {
+                InvalidateRect(window, null(), 1);
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        let is_dark = pref == ui_theme::ThemePref::Dark;
-        let theme = ui_theme::Theme::derive(pref, is_dark, false, &ui_theme::SysColors::default());
-        ui_theme::store(theme);
-    }
+}
+
+/// Ctrl+L: 지금 보이는 색의 반대를 `ui_theme`에 저장한다.
+unsafe fn toggle_theme(h: HWND) {
+    let Some(next) = ktm::theme::toggled(ui_theme::theme().kind) else { return };
+    let path = edit(|u| {
+        u.forced_theme = None;
+        u.settings.ui_theme = next.into();
+        u.settings_path.clone()
+    });
+    // 디스크의 다른 값(최근 검색어 등)은 그대로 두고 테마만 바꿔 저장한다.
+    let mut loaded = Settings::load(&path).unwrap_or_default();
+    loaded.ui_theme = next.into();
+    let _ = loaded.save(&path);
+    unsafe { apply_current_theme(h) };
 }
 
 /// 프로그램이 검색/결과-내-검색 입력칸 텍스트를 반영할 때 한글 IME 조합을 끊지 않고 내용이 다를 때만 갱신한다.
@@ -438,6 +459,8 @@ fn event(h: HWND, e: Event) {
         unsafe {
             match fx {
                 Effect::Show => {
+                    // 숨어 있는 동안 바뀐 앱·Windows 테마를 보이기 전에 반영한다.
+                    apply_current_theme(h);
                     let t = Instant::now();
                     let mut p = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut p);
@@ -753,20 +776,7 @@ fn key(h: HWND, key: usize) -> bool {
             // 탭 줄이 없어졌으므로 Tab 키는 검색창 포커스를 그대로 둔다.
             VK_TAB => {}
             _ if ctrl && key == b'S' as usize => cycle_sort(h),
-            _ if ctrl && key == b'L' as usize => {
-                let t = edit(|u| {
-                    u.theme = if u.theme == "dark" { "light" } else { "dark" }.into();
-                    sync_theme(&u.theme);
-                    u.theme.clone()
-                });
-                frame::apply_theme(h);
-                let path = with(|u| u.settings_path.clone());
-                let mut loaded = Settings::load(&path).unwrap_or_default();
-                loaded.theme = t;
-                let _ = loaded.save(&path);
-                InvalidateRect(h, null(), 1);
-                InvalidateRect(ed, null(), 1);
-            }
+            _ if ctrl && key == b'L' as usize => toggle_theme(h),
             _ if ctrl && (key == b'D' as usize || key == b'd' as usize) => {
                 event(h, Event::ToggleFavorite);
                 InvalidateRect(h, null(), 0);
@@ -993,8 +1003,9 @@ unsafe fn layout(h: HWND) {
     }
 }
 
-unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg: u32) {
+unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32) {
     unsafe {
+        let (mark_bg, mark_fg) = ktm::theme::term_mark(ui_theme::theme().kind, &palette());
         let saved = SaveDC(dc);
         // 한 줄에 다 들어가지 않는 이름은 칸 끝을 '…'로 표시한다(예전에는 글자가 중간에서 뚝 잘렸다).
         let full = wide(s);
@@ -1019,9 +1030,8 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
                 let w = wide(part);
                 let mut size: SIZE = std::mem::zeroed();
                 GetTextExtentPoint32W(dc, w.as_ptr(), (w.len() - 1) as i32, &mut size);
-                // 강조 칸(노란 바탕)에서는 어두운 글자색을 써야 읽힌다(어두운 테마의 흰 글자는 안 보였다).
-                SetTextColor(dc, if marked { 0x202020 } else { fg });
-                SetBkColor(dc, bg);
+                SetTextColor(dc, if marked { mark_fg } else { fg });
+                SetBkColor(dc, mark_bg);
                 SetBkMode(
                     dc,
                     if marked {
@@ -1099,7 +1109,6 @@ unsafe fn draw_preview_lines(
     rc: RECT,
     line_step: i32,
     fg: u32,
-    bg: u32,
 ) {
     unsafe {
         let max_w = (rc.right - rc.left).max(10);
@@ -1113,7 +1122,7 @@ unsafe fn draw_preview_lines(
                 right: rc.right,
                 bottom: line_bottom,
             };
-            highlighted(dc, line, terms, line_rc, fg, bg);
+            highlighted(dc, line, terms, line_rc, fg);
         }
     }
 }
@@ -2114,7 +2123,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         bottom: gy + line_h1,
                     },
                     p.row_text(sel, p.text),
-                    0x8AF0FE,
                 ); }
                 if let Some(path_left) = path_left {
                     SelectObject(mem, u.small);
@@ -2323,7 +2331,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let pad_r = r.right - scale(h, 12);
                     let line_step = scale(h, 18);
                     let content_top = prev_y + scale(h, 6);
-                    let highlight_bg = 0x8AF0FE;
 
                     SelectObject(mem, u.small);
                     draw_preview_lines(
@@ -2338,7 +2345,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         },
                         line_step,
                         if no_preview { p.text_faint } else { p.text },
-                        highlight_bg,
                     );
                 }
             }
@@ -2722,7 +2728,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         match s.ui_theme.as_str() {
                             "light" => "밝게".to_string(),
                             "dark" => "어둡게".to_string(),
-                            _ => "시스템".to_string(),
+                            _ => "앱 설정 따름".to_string(),
                         },
                         if s.default_search_mode == "filename" {
                             "파일명".to_string()
@@ -2925,6 +2931,16 @@ fn flush_metrics() {
 unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
     unsafe {
         match msg {
+            // Windows 어두운 모드·고대비·시스템 색 변경, 다른 도구의 DocFitThemeChanged 알림.
+            m if ui_theme::is_theme_message(m, w, l) => {
+                // 틀에 테마를 입히는 중 같은 알림이 되돌아와도 한 번만 처리한다.
+                thread_local!(static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+                if !APPLYING.replace(true) {
+                    apply_current_theme(h);
+                    APPLYING.set(false);
+                }
+                DefWindowProcW(h, msg, w, l)
+            }
             WM_NCCALCSIZE => {
                 // WS_THICKFRAME의 기본 계산이 남긴 우측 비클라이언트 띠가 자체 그리기와 겹쳤다.
                 0
@@ -3362,6 +3378,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             let (s, path) = with(|u| (u.settings.clone(), u.settings_path.clone()));
                             let _ = s.save(&path);
+                            if settings_tab == 0 && idx == 0 {
+                                edit(|u| u.forced_theme = None);
+                                apply_current_theme(h);
+                            }
                             if settings_tab == 2 && idx == 0 {
                                 let exe = std::env::current_exe().unwrap_or_default();
                                 let enabled = with(|u| u.settings.autostart);
@@ -4081,6 +4101,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         ktm::install::autostart_command().as_deref(),
                         &exe,
                     );
+                    // 숨어 있는 동안 바뀐 테마를 트레이 메뉴에도 반영한다.
+                    apply_current_theme(h);
                     let line = with(|u| tray::status_line(&u.hotkey, &u.hotkey_error));
                     match tray::menu(h, &line, autostart) {
                         tray::SHOW => event(h, Event::Show),
@@ -4249,8 +4271,14 @@ pub fn run() -> Result<(), String> {
         );
         SendMessageW(days_ed, 0x00c5, 5, 0);
 
-        let initial_theme = arg("--theme").unwrap_or(settings.theme.clone());
-        sync_theme(&initial_theme);
+        // 캡처·시험 모드는 사용자의 앱 설정을 읽지 않는다.
+        let app_settings = arg("--app-settings").map(PathBuf::from).or_else(|| {
+            if capture_dir.is_some() || std::env::var_os("KTM_TEST_ROOT").is_some() {
+                Some(data.join("app-settings.json"))
+            } else {
+                ktm::theme::default_app_settings()
+            }
+        });
 
         UI.with(|u| {
             *u.borrow_mut() = Some(Ui {
@@ -4281,7 +4309,8 @@ pub fn run() -> Result<(), String> {
                 glyph: null_mut(),
                 glyph_big: null_mut(),
                 brush: null_mut(),
-                theme: initial_theme,
+                forced_theme: arg("--theme"),
+                app_settings,
                 tx: pending.clone(),
                 rx,
                 status: status_tx,
@@ -4321,6 +4350,7 @@ pub fn run() -> Result<(), String> {
         });
 
         SetWindowLongPtrW(h, GWLP_WNDPROC, proc as *const () as isize);
+        apply_current_theme(h);
         frame::style_frame(h);
         create_fonts(h);
         layout(h);
