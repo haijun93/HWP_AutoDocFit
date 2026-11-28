@@ -2607,6 +2607,18 @@ class DesktopWebBridge:
         from docfit_app.kvf_client import KvfClient
         return KvfClient().command(action, payload)
 
+    def index_service(self, action, payload=None):
+        """전체 드라이브 파일명 색인 서비스: 상태·설치(관리자 승인)·제거."""
+        try:
+            controller = getattr(self, "_index_service_controller", None)
+            if controller is None:
+                from docfit_app.index_service import IndexServiceController
+                controller = self._index_service_controller = IndexServiceController()
+            return controller.command(action, payload)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("색인 서비스 처리 실패", exc_info=True)
+            return {"ok": False, "message": str(exc) or "색인 서비스를 처리하지 못했습니다."}
+
     def kclip(self, action, payload=None):
         """몽땅클립보드: 상주 프로그램(kagent.exe) 켜기·끄기와 목록·설정(파이프 명령)."""
         try:
@@ -4108,7 +4120,7 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "external_app", "photo_album", "kvf", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "photo_album", "kvf", "index_service", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",

@@ -9,6 +9,7 @@ import '../../core/api/abbreviation_api.dart';
 import '../../core/instant_search.dart';
 import '../preview/option_images.dart';
 import 'idiom_panel.dart';
+import 'index_service_panel.dart';
 import 'kvf_panel.dart';
 import 'kiosk_theme.dart';
 import 'setting_guides.dart';
@@ -24,6 +25,7 @@ class SettingsDialog extends StatefulWidget {
 // 설정 값 목록이 아닌 관리 화면 분류(상용구·앱 정보, 2026-10-15).
 const _panelCategories = [
   GuideCategory('kvf', '가상 폴더 창', 'Win+Shift+F', Icons.folder_open),
+  GuideCategory('index_service', '전체 드라이브 색인', '퀵몽땅검색 파일명', Icons.manage_search_rounded),
   GuideCategory('idiom_text', '글자 상용구', '준말 → 글자', Icons.short_text_rounded),
   GuideCategory('idiom_body', '본문 상용구', '준말 → 문서 서식', Icons.article_outlined),
   GuideCategory('about', '앱 정보', '개발자 도토리만두', Icons.info_outline_rounded),
@@ -790,6 +792,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   /// 오른쪽 내용: 설정 값 목록, 또는 상용구·앱 정보 관리 화면(검색 중이면 설정 값 목록).
   Widget _body(List<Map> visible, bool locked, String query) {
     if (query.isEmpty && category == 'kvf') return KvfPanel(api: widget.api);
+    if (query.isEmpty && category == 'index_service') return IndexServicePanel(api: widget.api);
     if (query.isEmpty && category == 'general') {
       final current = snapshot?['values'] as Map?;
       return ListView(
