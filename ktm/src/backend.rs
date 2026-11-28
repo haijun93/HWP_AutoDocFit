@@ -1188,8 +1188,9 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
 
 /// 파일명 색인을 지금 다시 만들도록 서비스에 요청한다(수동 시작·초기화). 서비스는 옛 색인으로 계속 답하면서
 /// 드라이브 전체를 새로 훑고, 이미 만드는 중이면 `names build already running`으로 거절한다.
+/// 요청에는 `id`를 넣지 않는다(서비스가 알 수 없는 필드를 응답 없이 끊는다).
 pub fn pipe_names_build(name: &str) -> Result<String> {
-    let bytes = pipe_call_with_timeout(name, &json!({"command":"names_build","id":1}), PIPE_LIGHT_TIMEOUT)?;
+    let bytes = pipe_call_with_timeout(name, &json!({"command":"names_build"}), PIPE_LIGHT_TIMEOUT)?;
     decode_names_build(&bytes)
 }
 
@@ -1199,6 +1200,8 @@ fn decode_names_build(bytes: &[u8]) -> Result<String> {
         let error = value["error"].as_str().unwrap_or("색인 서비스 오류");
         return Err(if error.contains("already running") {
             "파일명 색인을 이미 다시 만드는 중입니다.".to_owned()
+        } else if error.contains("needs roots") {
+            "색인 서비스가 관리자(서비스) 모드가 아니라 전체 드라이브를 만들 수 없습니다. 설정에서 색인 서비스를 설치·시작해 주세요.".to_owned()
         } else {
             format!("파일명 색인을 다시 만들지 못했습니다({error}).")
         });
@@ -1892,6 +1895,7 @@ mod tests {
     fn names_build_reply_is_decoded_into_user_messages() {
         assert!(decode_names_build(br#"{"ok":true,"state":"building"}"#).unwrap().contains("다시 만들기 시작"));
         assert!(decode_names_build(br#"{"ok":false,"error":"names build already running"}"#).unwrap_err().contains("이미"));
+        assert!(decode_names_build(br#"{"ok":false,"error":"user mode needs roots"}"#).unwrap_err().contains("서비스"));
         assert!(decode_names_build(br#"{"ok":false,"error":"service offline"}"#).unwrap_err().contains("service offline"));
         assert!(decode_names_build(b"not json").is_err());
     }
