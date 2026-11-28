@@ -353,6 +353,10 @@ impl NamesService {
     }
 
     pub fn query(&self, sid: &str, text: &str, limit: usize, sort: Option<&str>, hidden: bool, cancel: Arc<AtomicBool>) -> Result<Value> {
+        self.query_inner(sid, text, limit.min(MAX_LIMIT), sort, hidden, cancel)
+    }
+
+    fn query_inner(&self, sid: &str, text: &str, limit: usize, sort: Option<&str>, hidden: bool, cancel: Arc<AtomicBool>) -> Result<Value> {
         let started = Instant::now();
         if text.len() > 4096 {
             return Err("query too long".into());
@@ -369,7 +373,7 @@ impl NamesService {
             return Err("too many groups".into());
         }
         let deny = self.deny_for(sid, names);
-        let opts = Options { limit: limit.min(MAX_LIMIT), sort, deny, hidden, cancel: Some(cancel), ..Default::default() };
+        let opts = Options { limit, sort, deny, hidden, cancel: Some(cancel), ..Default::default() };
         let v = names.view();
         let r = {
             let mut ss = self.searchers.lock().map_err(|_| "searchers poisoned")?;
@@ -389,10 +393,14 @@ impl NamesService {
 
     /// Separate optional command; the existing names_query contract is unchanged.
     pub fn query_related(&self, sid: &str, text: &str, limit: usize, cancel: Arc<AtomicBool>) -> Result<Value> {
+        self.related_inner(sid, text, limit.min(MAX_LIMIT), cancel)
+    }
+
+    fn related_inner(&self, sid: &str, text: &str, limit: usize, cancel: Arc<AtomicBool>) -> Result<Value> {
         let groups=kfind_core::related_query::parse_related_query(text).map_err(|e|e.to_string())?;
         let g=self.names.read().map_err(|_|"names poisoned")?;
         let names=g.as_ref().ok_or("names index unavailable")?;
-        let opts=Options { limit:limit.min(MAX_LIMIT),deny:self.deny_for(sid,names),cancel:Some(cancel),..Default::default() };
+        let opts=Options { limit,deny:self.deny_for(sid,names),cancel:Some(cancel),..Default::default() };
         let v=names.view();
         let r=kfind_names::query::search_related(&v,text,&opts).map_err(|e|e.to_string())?;
         let items: Vec<Value>=hits(&v,&r.top).into_iter().map(|h|json!({
@@ -400,6 +408,20 @@ impl NamesService {
             "group_matches":groups.iter().enumerate().map(|(i,g)|json!({"group_index":i,"query":g.query,"match_count":1,"filename":true})).collect::<Vec<_>>()
         })).collect();
         Ok(json!({"generation":names.generation(),"total":r.total,"items":items,"narrowed":false,"related_groups":true}))
+    }
+
+    /// UNIFIED2 전수 응답. 기존 명령의 상한은 유지한다. SID 제외 규칙도 공유한다.
+    pub fn snapshot(&self, sid: &str, text: &str, related: bool, sort: Option<&str>, cancel: Arc<AtomicBool>) -> Result<Value> {
+        let mut result = if related {
+            self.related_inner(sid, text, usize::MAX, cancel)?
+        } else {
+            self.query_inner(sid, text, usize::MAX, sort, true, cancel)?
+        };
+        if result["total"].as_u64() != result["items"].as_array().map(|r| r.len() as u64) {
+            return Err("incomplete names snapshot".into());
+        }
+        result["complete"] = json!(true);
+        Ok(result)
     }
 
     /// Cursor-paged file-list query (offset/next are raw index positions) used by the document and photo views.
@@ -512,7 +534,7 @@ impl NamesService {
             "failed": match &i.state { State::Failed(e) => Some(e.clone()), _ => None },
             "version": 2,
             "features": ["names_list", "metadata_v2"],
-            "commands": ["names_build", "names_query", "names_related", "names_list", "names_status"],
+            "commands": ["names_build", "names_query", "names_related", "names_snapshot", "names_list", "names_status"],
         }))
     }
 }

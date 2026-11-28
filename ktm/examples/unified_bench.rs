@@ -136,13 +136,17 @@ fn serve(corpus: unified_support::Corpus, pipe: &str) -> Result<(), String> {
             file.read_exact(&mut bytes).map_err(|e| e.to_string())?;
             let request: serde_json::Value =
                 serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            if request["text"].as_str().is_some_and(|q|q.contains("느린검색")) {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            let snapshot = request["command"] == "names_snapshot";
             let answer = corpus.names(
                 request["text"].as_str().unwrap_or(""),
-                request["limit"].as_u64().unwrap_or(200) as usize,
+                if snapshot { usize::MAX } else { request["limit"].as_u64().unwrap_or(200) as usize },
             )?;
             let items: Vec<_> = answer.rows.iter().map(|r| json!({"name":r.name,"dir":r.parent,"is_dir":false,"size":256,"mtime":r.date})).collect();
             let response =
-                serde_json::to_vec(&json!({"ok":true,"result":{"items":items}})).unwrap();
+                serde_json::to_vec(&json!({"ok":true,"result":{"total":items.len(),"complete":snapshot,"items":items}})).unwrap();
             file.write_all(&(response.len() as u32).to_le_bytes())
                 .map_err(|e| e.to_string())?;
             file.write_all(&response).map_err(|e| e.to_string())?;

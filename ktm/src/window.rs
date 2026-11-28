@@ -39,6 +39,8 @@ use windows_sys::Win32::{
 const READY: u32 = WM_APP + 21;
 const QUICK_SEARCH_EMPTY_HINT: &str = "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기";
 const WARMED: u32 = WM_APP + 22;
+/// 통합 검색의 빈 중간 화면만 한 번 미룬다. 결과 도착·숨김 때 해제한다.
+const LOADING_PAINT_TIMER: usize = 1;
 pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -91,6 +93,7 @@ struct WorkTimes {
 }
 
 enum Reply {
+    UnifiedSession(u64, ktm::backend::unified::Session),
     Unified(u64, ktm::backend::unified::Snapshot, Instant, WorkTimes),
     Search(u64, Tab, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
@@ -101,6 +104,9 @@ struct Ui {
     state: State,
     rows: Vec<Row>,
     combined_batches: Vec<(tm_state::ResultKind, Vec<Row>)>,
+    unified_session: Option<ktm::backend::unified::Session>,
+    unified_cursors: Vec<ktm::backend::unified::Cursor>,
+    unified_page: usize,
     terms: Vec<String>,
     edit: HWND,
     within_edit: HWND,
@@ -123,6 +129,9 @@ struct Ui {
     first_input_paint: Option<Instant>,
     last_input_paint_ms: Option<f64>,
     unified_paint: Option<(Instant, bool)>,
+    unified_names_painted: bool,
+    loading_painted: bool,
+    loading_timer_fires: usize,
     /// External input clock, populated only by the isolated measurement probe.
     probe_input: Option<Instant>,
     ready_at: Option<Instant>,
@@ -335,6 +344,7 @@ fn event(h: HWND, e: Event) {
     let need_body_snippets = matches!(&e, Event::SetExcludeFilename(true));
     let record_recent_search = matches!(&e, Event::Submit | Event::ApplyHistory(_));
     let (effects, query_changed, within_changed, history_changed) = edit(|u| {
+        let previous_generation = u.state.generation;
         let prev_query = u.state.query.clone();
         let prev_within = u.state.options.within_query.clone();
         let prev_recent = u.state.recent_queries.clone();
@@ -360,6 +370,14 @@ fn event(h: HWND, e: Event) {
             || s.favorite_queries != prev_fav
             || (record_recent_search && !s.query.trim().is_empty());
         u.state = s;
+        if u.state.generation != previous_generation || u.state.phase == Phase::Hidden {
+            u.unified_session = None;
+            u.unified_cursors.clear();
+            u.unified_page = 0;
+            u.unified_names_painted = false;
+            u.loading_painted = false;
+            u.loading_timer_fires = 0;
+        }
         if need_body_snippets {
             let count = u.rows.len();
             request_snippets(u, count);
@@ -535,7 +553,15 @@ fn event(h: HWND, e: Event) {
     });
     let _ = path.send(s.to_string());
     unsafe {
-        InvalidateRect(h, null(), 0);
+        let defer_loading = user_input && with(|u| u.settings.unified_search && u.state.phase == Phase::Searching);
+        if defer_loading {
+            // 빠른 파일명이 도착하면 Results 이벤트가 타이머를 해제하고 즉시 그린다.
+            // 느린 원천은 단발 타이머 이후 기존 검색 중 화면을 보여 준다.
+            if SetTimer(h, LOADING_PAINT_TIMER, 10, None) == 0 { InvalidateRect(h, null(), 0); }
+        } else {
+            KillTimer(h, LOADING_PAINT_TIMER);
+            InvalidateRect(h, null(), 0);
+        }
     }
 }
 
@@ -641,6 +667,35 @@ fn cycle_sort(h: HWND) {
     unsafe { InvalidateRect(h, null(), 0) };
 }
 
+/// 페이지는 같은 전역 스냅샷만 사용한다. 세대를 올려 이전 페이지의 발췌 응답을 차단한다.
+fn unified_page(h: HWND, forward: bool) {
+    let changed = edit(|u| {
+        if u.state.pending_parts != 0 || u.state.phase != Phase::Results { return false; }
+        let Some(session) = &u.unified_session else { return false; };
+        let target = if forward {
+            let Ok(page) = session.page(u.unified_cursors[u.unified_page], u.settings.bounded_max_results()) else { return false; };
+            let Some(next) = page.next else { return false; };
+            if u.unified_cursors.len() == u.unified_page + 1 { u.unified_cursors.push(next); }
+            u.unified_page + 1
+        } else if u.unified_page > 0 { u.unified_page - 1 } else { return false; };
+        let Ok(mut page) = session.page(u.unified_cursors[target], u.settings.bounded_max_results()) else { return false; };
+        let allowed = ktm::layout::filter_row_indices(&page.answer.rows, &u.settings, u.state.selected_folder.as_deref());
+        page.answer.rows = allowed.into_iter().map(|i|page.answer.rows[i].clone()).collect();
+        ktm::backend::unified::sort_within_tiers(&mut page.answer.rows, u.body_sort);
+        u.cancel.store(true, Ordering::Relaxed);
+        u.cancel = Arc::new(AtomicBool::new(false));
+        u.state.generation += 1;
+        u.rows = page.answer.rows;
+        u.state.result_count = u.rows.len();
+        u.state.selected = (!u.rows.is_empty()).then_some(0);
+        u.unified_page = target;
+        u.top = 0;
+        request_snippets(u, ktm::backend::SNIPPET_PREFETCH);
+        true
+    });
+    if changed { unsafe { InvalidateRect(h, null(), 0); } }
+}
+
 fn key(h: HWND, key: usize) -> bool {
     unsafe {
         if with(|u| u.modal.is_some()) {
@@ -680,6 +735,8 @@ fn key(h: HWND, key: usize) -> bool {
         let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
         let alt = GetKeyState(VK_MENU as i32) < 0;
         match key as u16 {
+            VK_NEXT if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, true); }
+            VK_PRIOR if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, false); }
             VK_ESCAPE => event(h, Event::Hide),
             VK_RETURN => {
                 if ctrl {
@@ -1145,12 +1202,16 @@ unsafe fn paint(h: HWND) {
             draw(h, dc, r);
         }
         EndPaint(h, &ps);
+        if with(|u| u.settings.unified_search && u.state.phase == Phase::Searching) {
+            edit(|u| u.loading_painted = true);
+        }
         if let Some(start)=edit(|u|u.first_input_paint.take()) {
             let elapsed=start.elapsed().as_secs_f64()*1000.0;
             edit(|u|u.last_input_paint_ms=Some(elapsed));
             log("first_input_paint_ms",elapsed);
         }
         if let Some((start, complete)) = edit(|u| u.unified_paint.take()) {
+            if !complete { edit(|u| u.unified_names_painted = true); }
             phase(if complete { "unified_complete_to_paint_ms" } else { "unified_names_to_paint_ms" }, start.elapsed());
             if let Some(input) = with(|u| u.probe_input) {
                 phase(if complete { "probe_input_to_complete_paint_ms" } else { "probe_input_to_names_paint_ms" }, input.elapsed());
@@ -2324,6 +2385,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => ("검색 중…".into(), String::new()),
+                    Phase::Results if u.unified_session.is_some() => (
+                        format!("문서 {}건 · {}쪽", u.rows.len(), u.unified_page + 1),
+                        "Ctrl+PgUp 이전 · Ctrl+PgDn 이어보기".into(),
+                    ),
                     Phase::Results => (
                         format!("문서 {}건", u.rows.len()),
                         format!("폴더 {}개", u.state.folder_counts.len()),
@@ -2904,6 +2969,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             WM_PAINT => {
                 paint(h);
+                0
+            }
+            WM_TIMER if w == LOADING_PAINT_TIMER => {
+                KillTimer(h, LOADING_PAINT_TIMER);
+                if with(|u| u.state.phase == Phase::Searching) {
+                    edit(|u| u.loading_timer_fires += 1);
+                    InvalidateRect(h, null(), 0);
+                }
                 0
             }
             WM_ERASEBKGND => 1,
@@ -3839,6 +3912,17 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
+                        Reply::UnifiedSession(g, session) => {
+                            if g == with(|u| u.state.generation) && with(|u| u.state.phase) != Phase::Hidden {
+                                edit(|u| {
+                                    u.unified_cursors = vec![ktm::backend::unified::Cursor::default()];
+                                    u.unified_page = 0;
+                                    u.unified_session = Some(session);
+                                });
+                                InvalidateRect(h, null(), 0);
+                            }
+                            continue;
+                        }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
                                 if g == u.state.generation {
@@ -3888,7 +3972,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 }
                                 u.timing.get_or_insert(start);
                                 u.ready_at.get_or_insert_with(Instant::now);
-                                if snapshot.completed == tm_state::ResultKind::Names || snapshot.final_part {
+                                if (snapshot.completed == tm_state::ResultKind::Names && !u.unified_names_painted) || snapshot.final_part {
                                     u.unified_paint = Some((start, snapshot.final_part));
                                 }
                             });
@@ -4165,6 +4249,9 @@ pub fn run() -> Result<(), String> {
                 },
                 rows: Vec::new(),
                 combined_batches: Vec::new(),
+                unified_session: None,
+                unified_cursors: Vec::new(),
+                unified_page: 0,
                 terms: Vec::new(),
                 edit: ed,
                 within_edit: within_ed,
@@ -4187,6 +4274,9 @@ pub fn run() -> Result<(), String> {
                 first_input_paint: None,
                 last_input_paint_ms: None,
                 unified_paint: None,
+                unified_names_painted: false,
+                loading_painted: false,
+                loading_timer_fires: 0,
                 probe_input: None,
                 ready_at: None,
                 hotkey: String::new(),
@@ -4291,15 +4381,18 @@ pub fn run() -> Result<(), String> {
                             // Only the opt-in adapter queues All as one job. The legacy
                             // path continues to queue the original three independent jobs.
                             let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            let _ = ktm::backend::unified::stream(max_results, &cancel, |kind, top| {
+                            let session = ktm::backend::unified::collect(max_results, &cancel, |kind, top| {
                                 use ktm::backend::unified::{source, Source};
                                 let source = source(kind, related_queries, pipe_mode);
                                 if source == Source::NamesRelated {
+                                    if top == 0 { return ktm::backend::pipe_names_snapshot(&pipe_name, &q, sort, true); }
                                     return ktm::backend::pipe_names_related(&pipe_name, &q, top);
                                 }
                                 if source == Source::Names {
                                     let (text, dates) = ktm::backend::unified::names_query(&q, date_range, folder.as_deref(), ext.as_deref());
-                                    let mut rows = ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)?;
+                                    let mut rows = if top == 0 {
+                                        ktm::backend::pipe_names_snapshot(&pipe_name, &text, sort, false)?.rows
+                                    } else { ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)? };
                                     ktm::backend::unified::filter_name_dates(&mut rows, dates);
                                     return Ok(Answer { rows,
                                         terms: ktm::backend::unified::query_terms(&q),
@@ -4307,7 +4400,7 @@ pub fn run() -> Result<(), String> {
                                         ..Answer::default() });
                                 }
                                 let hierarchy = kind == tm_state::ResultKind::Hierarchy;
-                                if source == Source::ContentPipe {
+                                if source == Source::ContentPipe && top != 0 {
                                     let text = ktm::backend::unified::scoped_query(&q, date_range, folder.as_deref(), ext.as_deref(), match_mode);
                                     let rows = ktm::backend::pipe_search_limit(&pipe_name, &text, hierarchy, top)?;
                                     return Ok(Answer { rows,
@@ -4316,6 +4409,11 @@ pub fn run() -> Result<(), String> {
                                         ..Answer::default() });
                                 }
                                 if backend.is_none() { backend = Some(open(&root)?); }
+                                if top == 0 {
+                                    return backend.as_mut().unwrap().search_snapshot(
+                                        &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
+                                        Some(cancel.clone()), skip_cloud_network);
+                                }
                                 backend.as_mut().unwrap().search_with_scope_ext_limit_cloud(
                                     &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
                                     top, Some(cancel.clone()), skip_cloud_network,
@@ -4324,6 +4422,12 @@ pub fn run() -> Result<(), String> {
                                 let _ = tx.send(Reply::Unified(g, snapshot, start, WorkTimes { picked, done: Instant::now() }));
                                 PostMessageW(handle as HWND, READY, 0, 0);
                             });
+                            if let Ok(session) = session {
+                                if !cancel.load(Ordering::Relaxed) {
+                                    let _ = tx.send(Reply::UnifiedSession(g, session));
+                                    PostMessageW(handle as HWND, READY, 0, 0);
+                                }
+                            }
                             continue;
                         }
                         let hierarchy = tab == Tab::Hierarchy;
@@ -4552,6 +4656,12 @@ pub fn run() -> Result<(), String> {
 
         if let Some(output) = arg("--unified-measure") {
             probe::unified_measure(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-pages") {
+            probe::unified_pages(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-loading") {
+            probe::unified_loading(h, std::path::Path::new(&output))?;
         }
 
         let mut msg: MSG = std::mem::zeroed();

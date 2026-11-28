@@ -104,12 +104,14 @@ pub unsafe fn unified_measure(h: HWND, output: &std::path::Path) -> Result<(), S
                 if !valid { return Err("정렬이 통합 검색 단 순서를 바꿨습니다".into()); }
             }
         }
+        let active_memory = memory();
         event(h, Event::Hide);
         let before = memory();
         let cpu_before = cpu();
         let _ = pump_until(2000, || false);
         let after = memory();
         let report = serde_json::json!({"unified_search":with(|u| u.settings.unified_search),"queries":queries,
+            "active_private_bytes":active_memory.0,"active_private_working_set_bytes":active_memory.2,
             "idle_seconds":2,"idle_cpu_ms":(cpu()-cpu_before) as f64/10000.0,
             "idle_private_bytes_start":before.0,"idle_private_bytes_end":after.0,
             "idle_private_working_set_start":before.2,"idle_private_working_set_end":after.2});
@@ -118,6 +120,71 @@ pub unsafe fn unified_measure(h: HWND, output: &std::path::Path) -> Result<(), S
         Ok(())
     }
 }
+
+/// 합성 세션의 실제 창 페이지 전환·이전 복원·숨김 폐기 검사. 기존 앱을 찾지 않는다.
+pub unsafe fn unified_pages(h: HWND, output: &std::path::Path) -> Result<(), String> {
+    unsafe {
+        if std::env::var_os("KTM_TEST_ROOT").is_none() || !with(|u| u.settings.unified_search) {
+            return Err("격리 통합 검색 설정이 필요합니다".into());
+        }
+        pump_until(20000, || with(|u| u.warmed))?;
+        show(h);
+        SetWindowTextW(with(|u| u.edit), wide("예산집행").as_ptr());
+        pump_until(20000, || with(|u| u.unified_session.is_some() && u.state.pending_parts == 0))?;
+        if !with(|u|u.leg_errors.is_empty()) {return Err("통합 원천 조회 실패".into());}
+        let totals=with(|u|u.unified_session.as_ref().unwrap().totals());
+        let mut seen=std::collections::HashSet::new();
+        let mut pages=0;
+        loop {
+            let rows=with(|u|u.rows.clone());
+            for row in rows {
+                if !seen.insert(ktm::backend::unified::path_key(&row.path)) {return Err("페이지 중복".into());}
+            }
+            pages+=1;
+            let old=with(|u|u.unified_page);
+            unified_page(h,true);
+            UpdateWindow(h);
+            if with(|u|u.unified_page)==old {break;}
+        }
+        if totals.iter().sum::<usize>()!=seen.len() {return Err("페이지 누락".into());}
+        let last=with(|u|u.rows.iter().map(|r|r.path.clone()).collect::<Vec<_>>());
+        unified_page(h,false);unified_page(h,true);
+        if last!=with(|u|u.rows.iter().map(|r|r.path.clone()).collect::<Vec<_>>()) {return Err("이전 페이지 복원 불일치".into());}
+        let excluded=with(|u|u.rows.first().map(|r|r.parent.clone()).unwrap_or_default());
+        if excluded.is_empty() {return Err("합성 결과 폴더 누락".into());}
+        edit(|u|u.settings.excluded_directories.push(excluded));
+        unified_page(h,false);
+        if with(|u|!u.rows.is_empty()) {return Err("이어보기에서 제외 폴더 재등장".into());}
+        event(h,Event::Hide);
+        if with(|u|u.unified_session.is_some()) {return Err("숨김 후 세션 유지".into());}
+        let report=serde_json::json!({"ok":true,"totals":totals,"unique_documents":seen.len(),"pages":pages,
+            "back_forward_equal":true,"excluded_folder_honored":true,"hidden_session_released":true});
+        std::fs::write(output,serde_json::to_vec_pretty(&report).unwrap()).map_err(|e|e.to_string())?;
+        DestroyWindow(h);Ok(())
+    }
+}
+/// 검색어를 넣고 결과를 그릴 때까지(입력 → 결과 그리기).
+pub unsafe fn unified_loading(h: HWND, output: &std::path::Path) -> Result<(),String> {
+    unsafe {
+        if std::env::var_os("KTM_TEST_ROOT").is_none() || !with(|u|u.settings.unified_search) {
+            return Err("격리 통합 검색 설정이 필요합니다".into());
+        }
+        pump_until(20000,||with(|u|u.warmed))?;
+        show(h);
+        SetWindowTextW(with(|u|u.edit),wide("느린검색").as_ptr());
+        pump_until(5000,||with(|u|u.unified_session.is_some() && u.state.pending_parts==0))?;
+        let (painted,fires)=with(|u|(u.loading_painted,u.loading_timer_fires));
+        if !painted || fires!=1 {return Err(format!("검색 중 표시/단발 타이머 실패: {painted}/{fires}"));}
+        SetWindowTextW(with(|u|u.edit),wide("느린검색 취소").as_ptr());
+        event(h,Event::Hide);
+        let _=pump_until(50,||false);
+        if with(|u|u.loading_timer_fires!=0 || u.unified_session.is_some()) {return Err("숨김 후 타이머/세션 유지".into());}
+        let report=serde_json::json!({"ok":true,"loading_painted":painted,"timer_fires":fires,"hidden_timer_fires":0});
+        std::fs::write(output,serde_json::to_vec_pretty(&report).unwrap()).map_err(|e|e.to_string())?;
+        DestroyWindow(h);Ok(())
+    }
+}
+
 /// 검색어를 넣고 결과를 그릴 때까지(입력 → 결과 그리기).
 unsafe fn type_query(h: HWND, text: &str) -> Result<f64, String> {
     unsafe {
