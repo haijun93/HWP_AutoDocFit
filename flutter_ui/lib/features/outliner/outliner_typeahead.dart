@@ -1,4 +1,6 @@
-import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+
+import 'outliner_typing.dart';
 
 /// 명령 처리 중에 친 글(OUTKEYS2)을 떼어 내고 다른 칸·커서에 다시 넣는 규칙. 위치는 UTF-16.
 ///
@@ -67,3 +69,32 @@ TextSelection _selectionOf(TextEditingValue value) {
 
 bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
 bool _isLowSurrogate(int unit) => unit >= 0xDC00 && unit <= 0xDFFF;
+
+/// 처리 뒤에 적용하는 Backspace([forward] 면 Delete). 칸 안에서 지울 것이 없으면
+/// (Backspace 는 맨 앞, Delete 는 맨 끝) null 이며, 그때는 블록 합치기 명령의 몫이다.
+TextEditingValue? eraseInField(TextEditingValue value, {required bool forward}) {
+  final text = value.text;
+  final selection = _selectionOf(value);
+  var start = selection.start;
+  var end = selection.end;
+  if (start == end) {
+    if (forward) {
+      if (end == text.length) return null;
+      end += text.substring(end).characters.first.length;
+    } else {
+      if (start == 0) return null;
+      final pair = pairBackspace(text, start);
+      if (pair != null) {
+        return TextEditingValue(
+          text: pair.text,
+          selection: TextSelection.collapsed(offset: pair.caret),
+        );
+      }
+      start -= text.substring(0, start).characters.last.length;
+    }
+  }
+  return TextEditingValue(
+    text: text.replaceRange(start, end, ''),
+    selection: TextSelection.collapsed(offset: start),
+  );
+}

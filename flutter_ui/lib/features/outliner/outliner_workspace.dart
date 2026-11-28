@@ -136,7 +136,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   String? _version;
   String _message = '';
   bool _busy = false;
-  // 명령 처리 중에 누른 Enter·Tab 은 버리지 않고 끝난 뒤 차례로 적용한다(OUTFLASH1·OUTKEYS2).
+  // 명령 처리 중에 누른 Enter·Tab·Backspace·Delete 는 버리지 않고 끝난 뒤 차례로
+  // 적용한다(OUTFLASH1·OUTKEYS2·OUTKEYS3).
   // [before] 는 앞 명령과 이 키 사이에 친 글이다.
   final List<({String operation, TextEditingValue before, String? page})>
   _queued = [];
@@ -152,6 +153,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   List<Object?> _unfiltered = const [];
   // 마지막 명령이 커서를 둔 블록과 그때의 칸(친 글을 뺀 상태).
   ({Object? id, TextEditingValue value})? _at;
+  bool _cursorKnown = true; // false: 결과가 커서를 주지 않아 짐작한 자리
   // 입력 중인 칸 = 이 값 + 마지막 예약 키 뒤에 친 글.
   ({Object? id, TextEditingValue value})? _base;
   Object? _pendingFocus; // 다음 그리기 뒤에 커서를 옮길 블록
@@ -511,6 +513,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }) async {
     _editing = editing;
     _at = _base = typed;
+    _cursorKnown = true;
     setState(() {
       _busy = true;
       _message = '';
@@ -631,7 +634,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       });
 
   /// 예약한 키를 적용하지 않는다. 친 글은 이미 칸에 있으므로 칸을 지키기만 한다.
-  void _abortQueued() {
+  void _abortQueued([String reason = '']) {
     final count = _queued.length;
     _queued.clear();
     final id = _base?.id;
@@ -648,35 +651,59 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       setState(
         () => _message = [
           if (_message.isNotEmpty) _message,
-          '처리 중에 누른 Enter·Tab $count개는 적용하지 않았습니다. 친 글은 칸에 남아 있습니다.',
+          '$reason처리 중에 누른 Enter·Tab·Backspace·Delete $count개는 적용하지 않았습니다. '
+              '친 글은 칸에 남아 있습니다.',
         ].join('\n'),
       );
     }
   }
 
+  /// 예약한 키를 차례로 적용한다. 엔진에 보낼 명령 하나를 시작하면 멈춘다.
   void _runQueued() {
-    final next = _queued.first;
-    final cursor = _at;
-    final base = _base;
-    final controller = _editors[cursor?.id];
-    final at = _blocks.indexWhere((b) => b['id'] == cursor?.id);
-    if (cursor == null ||
-        base == null ||
-        controller == null ||
-        at < 0 ||
-        next.page != _page ||
-        _selectedIds.isNotEmpty) {
-      _abortQueued();
-      return;
+    while (_queued.isNotEmpty) {
+      final next = _queued.first;
+      final cursor = _at;
+      final base = _base;
+      final controller = _editors[cursor?.id];
+      final at = _blocks.indexWhere((b) => b['id'] == cursor?.id);
+      if (cursor == null ||
+          base == null ||
+          controller == null ||
+          at < 0 ||
+          next.page != _page ||
+          _selectedIds.isNotEmpty) {
+        _abortQueued();
+        return;
+      }
+      final erase =
+          next.operation == 'backspace' || next.operation == 'delete';
+      // 짐작한 자리에서는 지우거나 합치지 않는다.
+      if (erase && !_cursorKnown) {
+        _abortQueued('커서 위치를 알 수 없어 ');
+        return;
+      }
+      final live = typedSince(base.value, controller.value);
+      _queued.removeAt(0);
+      var value = insertTyped(cursor.value, next.before);
+      // 글자 지우기인지 블록 합치기인지는 지금의 커서 위치로 정한다.
+      final erased = erase
+          ? eraseInField(value, forward: next.operation == 'delete')
+          : null;
+      if (erased != null) {
+        value = erased;
+        _at = (id: cursor.id, value: value);
+      } else {
+        _key(next.operation, block: _blocks[at], value: value);
+      }
+      // 아직 보내지 않은 글은 계속 칸에 보인다.
+      final rest = _queued.fold(value, (v, q) => insertTyped(v, q.before));
+      _base = (id: cursor.id, value: rest);
+      _setValue(controller, insertTyped(rest, live));
+      if (erased == null) return;
     }
-    final live = typedSince(base.value, controller.value);
-    _queued.removeAt(0);
-    final value = insertTyped(cursor.value, next.before);
-    _key(next.operation, block: _blocks[at], value: value);
-    // 아직 보내지 않은 글은 계속 칸에 보인다.
-    final rest = _queued.fold(value, (v, q) => insertTyped(v, q.before));
-    _base = (id: cursor.id, value: rest);
-    _setValue(controller, insertTyped(rest, live));
+    // 마지막이 칸 안 지우기였다: 보낼 명령이 없고 칸은 저장 전 상태로 남는다.
+    _at = _base = null;
+    setState(() {});
   }
 
   void _setValue(TextEditingController controller, TextEditingValue value) {
@@ -686,7 +713,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     }
   }
 
-  /// 처리 중에 누른 Enter·Tab 을 예약한다.
+  /// 처리 중에 누른 키를 예약한다.
   void _enqueue(String operation, Object? pressedId) {
     if (_queued.length >= _queueLimit) return;
     final id = _base?.id ?? pressedId;
@@ -696,7 +723,10 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     final now = controller.value;
     final base = _base;
     // 칸의 글을 바꾸지 않는 명령(다른 칸 저장 등) 중: 지금 칸이 그대로 기준이다.
-    if (base == null) _at = (id: id, value: now);
+    if (base == null) {
+      _at = (id: id, value: now);
+      _cursorKnown = true;
+    }
     _queued.add((
       operation: operation,
       before: base == null
@@ -720,7 +750,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         : typedSince(base.value, old.value);
     final ahead = _queued.isNotEmpty || live.text.isNotEmpty;
     var index = cursor is Map ? cursor['block'] as int? ?? 0 : -1;
-    if (index < 0 || index >= _blocks.length) {
+    _cursorKnown = index >= 0 && index < _blocks.length;
+    if (!_cursorKnown) {
       index = _blocks.indexWhere((b) => b['id'] == base.id);
       if (index < 0) index = _blocks.length - 1;
     }
@@ -1334,14 +1365,19 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       return KeyEventResult.handled;
     }
     if (ctrl || alt || shift) return KeyEventResult.ignored;
-    if (key == LogicalKeyboardKey.backspace && atStart) return run('backspace');
-    if (key == LogicalKeyboardKey.delete && atEnd) return run('delete');
+    // 블록 합치기는 새로 누를 때만. 누르고 있는 키가 여러 블록을 잇달아 합치지 않게 한다.
+    if (key == LogicalKeyboardKey.backspace && atStart) {
+      return event is KeyDownEvent ? run('backspace') : KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.delete && atEnd) {
+      return event is KeyDownEvent ? run('delete') : KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.arrowLeft && atStart) return run('left');
     if (key == LogicalKeyboardKey.arrowRight && atEnd) return run('right');
     return KeyEventResult.ignored;
   }
 
-  /// 편집 명령 처리 중의 키. 글자는 입력 칸에 맡기고 Enter·Tab 은 예약한다.
+  /// 편집 명령 처리 중의 키. 글자는 입력 칸에 맡기고 Enter·Tab·Backspace·Delete 는 예약한다.
   /// 커서를 옮기는 키와 단축키는 친 글의 자리를 알 수 없게 하므로 받지 않는다.
   KeyEventResult _handleBusyKey(
     Object? id,
@@ -1374,24 +1410,35 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     if (composing) return KeyEventResult.ignored; // 나머지는 IME 몫
     if (key == LogicalKeyboardKey.backspace ||
         key == LogicalKeyboardKey.delete) {
-      // 처리 중에 친 글 안에서만 지운다. 명령에 보낸 글은 건드리지 않는다.
+      // 처리 중에 친 글 안에서는 바로 지운다. 명령에 보낸 글은 건드리지 않고 예약한다.
       final s = controller.selection;
       if (ctrl || alt || !s.isValid) return KeyEventResult.handled;
-      final base = _base?.value;
-      if (base == null) return KeyEventResult.ignored;
-      final head = base.selection.isValid
-          ? base.selection.start
-          : base.text.length;
-      final tail = base.selection.isValid
-          ? base.text.length - base.selection.end
-          : 0;
-      final end = controller.text.length - tail;
       final back = key == LogicalKeyboardKey.backspace;
-      final inside =
-          s.start >= head &&
-          s.end <= end &&
-          (!s.isCollapsed || (back ? s.start > head : s.end < end));
-      return inside ? KeyEventResult.ignored : KeyEventResult.handled;
+      final base = _base?.value;
+      if (base == null) {
+        // 이 칸을 바꾸지 않는 명령 중: 블록을 합쳐야 하는 자리가 아니면 칸이 바로 지운다.
+        final edge = back ? 0 : controller.text.length;
+        if (!s.isCollapsed || s.start != edge) return KeyEventResult.ignored;
+      } else {
+        final head = base.selection.isValid
+            ? base.selection.start
+            : base.text.length;
+        final tail = base.selection.isValid
+            ? base.text.length - base.selection.end
+            : 0;
+        final end = controller.text.length - tail;
+        final inside =
+            controller.text != base.text &&
+            s.start >= head &&
+            s.end <= end &&
+            (!s.isCollapsed || (back ? s.start > head : s.end < end));
+        if (inside) return KeyEventResult.ignored;
+      }
+      // 반복 입력과 Shift 조합은 예약하지 않는다.
+      if (event is KeyDownEvent && !shift) {
+        _enqueue(back ? 'backspace' : 'delete', id);
+      }
+      return KeyEventResult.handled;
     }
     final blocked =
         key == LogicalKeyboardKey.escape ||
