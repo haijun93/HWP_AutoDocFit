@@ -493,6 +493,56 @@ class TimemachineContentIndexLifecycleTests(unittest.TestCase):
             finally:
                 service2.close()
 
+    def test_reset_clears_stored_index_and_rebuilds_from_scratch(self):
+        for i in range(1, 4):
+            (self.root / f"file_{i}.txt").write_text(f"content {i}", encoding="utf-8")
+        fake = DelayableFakeIndexer()
+        self.service.content_index.index_file = fake.index_file
+        cleared = []
+        self.service.content_index.clear = lambda: cleared.append(True)
+        removed_keys = []
+
+        pages = [["a", "b"], ["c"], []]
+        self.service.kfind.stale = lambda scope, level, **kwargs: {"doc_keys": pages.pop(0)}
+        self.service.kfind.remove = lambda keys: removed_keys.extend(keys)
+
+        result = self.service.command("content_index_reset")
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["reset"])
+        self.assertEqual(cleared, [True])
+        self.assertEqual(removed_keys, ["a", "b", "c"])
+        self.assertEqual(result["kfind_removed"], 3)
+
+        worker = self.service._content_thread
+        self.assertIsNotNone(worker)
+        worker.join(timeout=3.0)
+        status = self.service.command("content_index_status")
+        self.assertFalse(status["running"])
+        self.assertEqual(status["indexed"], 3)
+        self.assertEqual(len(fake.calls), 3)
+        # 원본 문서는 그대로 남는다.
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["file_1.txt", "file_2.txt", "file_3.txt"])
+
+    def test_reset_still_rebuilds_when_search_service_is_unreachable(self):
+        (self.root / "a.txt").write_text("content", encoding="utf-8")
+        fake = DelayableFakeIndexer()
+        self.service.content_index.index_file = fake.index_file
+
+        def offline(*args, **kwargs):
+            raise OSError("pipe missing")
+
+        self.service.kfind.stale = offline
+        result = self.service.command("content_index_reset")
+        self.assertTrue(result["ok"])
+        self.assertIn("kfind_note", result)
+        self.service._content_thread.join(timeout=3.0)
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_reset_requires_registered_folders(self):
+        self.service.command("settings_set", {"roots": [], "time_mode": "max", "enabled": True})
+        result = self.service.command("content_index_reset")
+        self.assertFalse(result["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()
