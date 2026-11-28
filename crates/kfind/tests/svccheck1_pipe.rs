@@ -41,7 +41,7 @@ async fn names_list_cursor_metadata_and_capabilities_over_isolated_pipe() {
     std::fs::write(data.path().join("ignored.log"), b"ignored").unwrap();
     let pipe = format!(r"\\.\pipe\SVCCHECK1-{}", std::process::id());
     let _process = Process(Command::new(env!("CARGO_BIN_EXE_kfind"))
-        .args(["--user", "--pipe-name", &pipe, "--index-root"])
+        .args(["--user", "--no-auto-names", "--pipe-name", &pipe, "--index-root"])
         .arg(index.path()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
         .creation_flags(0x08000000).spawn().unwrap());
     let status = request(&pipe, json!({"command":"names_status"})).await;
