@@ -1,13 +1,16 @@
 pub mod backend;
+pub mod app_host;
 pub mod export;
 pub mod frame;
 pub mod highlight;
 pub mod install;
 pub mod layout;
+pub mod notice;
 pub mod open;
 pub mod paragraphs;
 pub mod paths;
 pub mod settings;
+pub mod theme;
 pub mod tm_state;
 pub mod tray;
 pub mod view_dump;

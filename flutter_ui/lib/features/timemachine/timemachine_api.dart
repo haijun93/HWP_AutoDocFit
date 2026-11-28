@@ -31,10 +31,14 @@ class TimemachineItem {
     required this.flags,
     required this.cloud,
     required this.folder,
+    this.path = '',
   });
 
   final int id;
   final String name, kind, folder;
+  // 이름 검색 결과처럼 항목 번호가 없는(id 0) 항목은 경로로 가리킨다.
+  final String path;
+  String get fullPath => path.isNotEmpty ? path : '$folder\\$name';
   final int size;
   final double mtime, ctime, workTime;
   final Set<String> flags;
@@ -52,6 +56,7 @@ class TimemachineItem {
         .map((item) => '$item').toSet(),
     cloud: value['cloud'] == true,
     folder: '${value['folder'] ?? ''}',
+    path: '${value['path'] ?? ''}',
   );
 }
 

@@ -60,6 +60,7 @@ pub fn relative_time_label(now_unix: u64, then_unix: u64) -> String {
 pub struct Settings {
     /// UNIFIED1: 요청 하나로 세 검색 단을 순차 발행한다. 기존 설정은 꺼짐.
     pub unified_search: bool,
+    /// 옛 Ctrl+L 값. `ui_theme`이 없던 파일의 "light"를 옮길 때만 읽는다(QMSDARK1).
     pub theme: String,
     pub hotkey: String,
     pub recent_queries: Vec<String>,
@@ -190,10 +191,22 @@ impl Settings {
 
     pub fn load(path: &Path) -> Result<Self, String> {
         match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("설정 읽기 오류: {e}")),
+            Ok(bytes) => Self::parse(&bytes).map_err(|e| format!("설정 읽기 오류: {e}")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(format!("설정 읽기 오류: {e}")),
         }
+    }
+
+    /// 테마 값은 `ui_theme` 하나다. 그 키가 아예 없는 옛 파일만 `theme`의 "light"를 옮긴다
+    /// ("dark"는 옛 기본값이라 사용자가 고른 것인지 알 수 없어 옮기지 않는다).
+    fn parse(bytes: &[u8]) -> serde_json::Result<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)?;
+        let before_ui_theme = value.get("ui_theme").is_none();
+        let mut settings: Self = serde_json::from_value(value)?;
+        if before_ui_theme && settings.theme == "light" {
+            settings.ui_theme = "light".into();
+        }
+        Ok(settings)
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -242,6 +255,18 @@ mod tests {
         assert_eq!(s.max_results, 100);
         assert_eq!(s.ui_theme, "system");
         assert!(s.include_subfolders);
+    }
+    #[test]
+    fn legacy_theme_moves_only_into_files_without_ui_theme() {
+        for (json, want) in [
+            (r#"{"theme":"light"}"#, "light"),
+            (r#"{"theme":"dark"}"#, "system"),
+            (r#"{"theme":"light","ui_theme":"system"}"#, "system"),
+            (r#"{"theme":"light","ui_theme":"dark"}"#, "dark"),
+            (r#"{}"#, "system"),
+        ] {
+            assert_eq!(Settings::parse(json.as_bytes()).unwrap().ui_theme, want, "{json}");
+        }
     }
     #[test]
     fn new_settings_fields_roundtrip() {

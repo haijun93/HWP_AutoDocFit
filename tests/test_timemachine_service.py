@@ -328,6 +328,20 @@ class TimemachineServiceTests(unittest.TestCase):
         result = self.service.command("file_search", {"query": "보고서"})
         self.assertTrue(result["ok"])
 
+    def test_file_name_search_rows_can_be_shown_and_opened_without_item_id(self):
+        self.enable()
+        folder = self.root / "allowed묶음"
+        folder.mkdir()
+        document = folder / "allowed.txt"
+        document.write_text("allowed", encoding="utf-8")
+        self.assertTrue(self.service.command("content_index", {"path": str(document)})["ok"])
+        items = self.service.command("file_search", {"query": "allowed"})["items"]
+        rows = {item["name"]: item for item in items}
+        self.assertEqual(rows[document.name]["folder"], str(folder))
+        self.assertEqual(rows[document.name]["kind"], Rules().kind(document.name))
+        self.assertEqual(rows[folder.name]["folder"], str(self.root))
+        self.assertEqual(rows[folder.name]["kind"], "folder")
+
     def test_content_index_requires_active_root_and_searches_local_text(self):
         self.developer_mode = True
         self.enable()

@@ -384,6 +384,11 @@ impl Out {
         if limit == 0 {
             return;
         }
+        // 전수 스냅샷은 순서대로 삽입하지 않고 merge에서 한 번만 정렬한다.
+        if limit == usize::MAX {
+            self.top.push(c);
+            return;
+        }
         if self.top.len() == limit {
             let last = *self.top.last().unwrap();
             if c.0 > last.0 || cmp_cand(v, c, last, sort) != std::cmp::Ordering::Less {

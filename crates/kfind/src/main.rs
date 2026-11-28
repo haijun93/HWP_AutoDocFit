@@ -78,8 +78,7 @@ fn run() -> Result<()> {
                 .find(|w| w[0] == "--pipe-name")
                 .and_then(|w| w[1].to_str())
                 .unwrap_or(kfind::PIPE_NAME),
-            // 시험·진단용: 시작 때 기본 폴더 파일명 색인 자동 생성을 끈다.
-            !args.iter().any(|a| a == "--no-auto-names"),
+            auto_names_allowed(&args, std::env::var_os("DOCFIT_FORBID_REAL_DATA").as_deref()),
         ),
         _ => {
             println!(
@@ -95,11 +94,25 @@ fn user_index() -> Result<PathBuf> {
         .ok_or("LOCALAPPDATA unavailable")?
         .join("HwpAutoDocFit/index"))
 }
+/// 시작 때 실제 사용자 폴더를 스스로 훑어도 되는 실행인지. 다음 가운데 하나라도 있으면 훑지 않는다.
+/// - `--no-auto-names`: 명시적으로 끔(시험·진단용)
+/// - `--index-root`·`--pipe-name`: 색인 위치나 파이프를 따로 준 시험·격리 실행(옵션을 빠뜨려도 막힌다)
+/// - 환경 변수 `DOCFIT_FORBID_REAL_DATA=1`: 앱 시험이 띄운 자식 프로세스(옵션을 줄 수 없는 경로)
+fn auto_names_allowed(args: &[std::ffi::OsString], forbid_real_data: Option<&std::ffi::OsStr>) -> bool {
+    forbid_real_data.is_none_or(|v| v != "1")
+        && !args
+            .iter()
+            .any(|a| a == "--no-auto-names" || a == "--index-root" || a == "--pipe-name")
+}
 fn user_mode(root: PathBuf, name: &str, auto_names: bool) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_sender, receiver) = tokio::sync::watch::channel(false);
     // 서비스 없이도 파일명 검색이 되도록 바탕 화면·문서·다운로드로 파일명 색인을 스스로 만든다.
-    let auto_roots = if auto_names { kfind::names::default_user_roots_from_env() } else { Vec::new() };
+    let auto_roots = if auto_names {
+        kfind::names::default_user_roots_from_env()
+    } else {
+        Vec::new()
+    };
     runtime.block_on(kfind::pipe::run_user(name, root, receiver, auto_roots))
 }
 fn install_task() -> Result<()> {
@@ -122,4 +135,22 @@ fn install_task() -> Result<()> {
         return Err("scheduled task installation failed".into());
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::auto_names_allowed;
+
+    #[test]
+    fn only_the_plain_user_run_indexes_the_users_folders() {
+        let args = |v: &[&str]| v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        let allowed = |v: &[&str], env: Option<&str>| {
+            auto_names_allowed(&args(v), env.map(std::ffi::OsStr::new))
+        };
+        assert!(allowed(&["--user"], None));
+        assert!(allowed(&["--user"], Some("0")));
+        assert!(!allowed(&["--user", "--index-root", "x"], None));
+        assert!(!allowed(&["--user", "--pipe-name", "x"], None));
+        assert!(!allowed(&["--user", "--no-auto-names"], None));
+        assert!(!allowed(&["--user"], Some("1")));
+    }
 }

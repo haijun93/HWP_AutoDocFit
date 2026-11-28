@@ -186,6 +186,62 @@ pub fn filter_name_dates(rows: &mut Vec<Row>, dates: Option<(i64, i64)>) {
     });
 }
 
+/// 폴더 이름만 묻는 질의(v2.2.119 폴더 이름 검색). 입력에 `ext:` 조건이 있으면 파일을 고르는 것이라
+/// 폴더를 묻지 않는다. `names_query`가 만든 묶음의 `file:`만 `folder:`로 바꾼다.
+pub fn folder_names_query(
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+) -> Option<String> {
+    let typed = kfind_core::split_semicolon_groups(query).iter().any(|group| {
+        kfind_core::parse_query_syntax(&normalize_ext_lists(group))
+            .file_types
+            .is_some_and(|types| !types.is_empty())
+    });
+    if typed {
+        return None;
+    }
+    let (files, _) = names_query(query, dates, folder, None);
+    let groups: Vec<String> = kfind_core::split_semicolon_groups(&files)
+        .iter()
+        .map(|group| format!("{} folder:", group.trim_end().trim_end_matches("file:").trim_end()))
+        .collect();
+    Some(groups.join("; "))
+}
+
+/// 통합 검색의 파일명 단: 폴더 이름 일치를 앞에, 파일 이름 일치를 뒤에 둔다. `top == 0`은 전수 조회,
+/// 아니면 합쳐서 `top`개까지다. `ext`는 파일에만 적용한다. `folders`가 false면(화면에서 종류를 고름) 파일만 묻는다.
+pub fn fetch_names(
+    pipe: &str,
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+    ext: Option<&str>,
+    sort: &str,
+    top: usize,
+    folders: bool,
+) -> Result<Vec<Row>> {
+    let ask = |text: &str| -> Result<Vec<Row>> {
+        if top == 0 {
+            Ok(super::pipe_names_snapshot(pipe, text, sort, false)?.rows)
+        } else {
+            super::pipe_names_limit(pipe, text, sort, top)
+        }
+    };
+    let mut rows = Vec::new();
+    if let Some(text) = folder_names_query(query, dates, folder).filter(|_| folders) {
+        rows = ask(&text)?;
+        rows.retain(|row| row.is_dir);
+    }
+    let (text, dates) = names_query(query, dates, folder, ext);
+    rows.extend(ask(&text)?);
+    filter_name_dates(&mut rows, dates);
+    if top != 0 {
+        rows.truncate(top);
+    }
+    Ok(rows)
+}
+
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub answer: Answer,
@@ -344,6 +400,288 @@ pub fn label(kind: ResultKind) -> &'static str {
         ResultKind::Names => "파일명",
         ResultKind::Hierarchy => "위계",
         ResultKind::Body => "본문",
+    }
+}
+
+/// 전수 응답으로 확정한 세션. 기존 bounded merge/stream과 계약을 구분한다.
+/// 생성 후 색인을 다시 읽지 않으므로 이어보기 도중 순서나 단이 바뀌지 않는다.
+#[derive(Debug, Default)]
+pub struct Session {
+    tiers: [Vec<Row>; 3],
+    pub terms: Vec<String>,
+    pub groups: Vec<String>,
+    pub folder_counts: Vec<(String, u32)>,
+    pub autocompletes: Vec<String>,
+    pub errors: Vec<String>,
+    pub state: SessionState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionState {
+    #[default]
+    Ready,
+    Incomplete,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cursor([usize; 3]);
+
+#[derive(Debug)]
+pub struct Page {
+    pub answer: Answer,
+    pub next: Option<Cursor>,
+    pub totals: [usize; 3],
+}
+
+impl Session {
+    /// 호출자는 후보가 잘리지 않은 완전한 원천 응답만 전달해야 한다.
+    pub fn from_complete(batches: Vec<(ResultKind, Answer)>) -> Self {
+        let mut aliases = HashMap::new();
+        for (kind, _) in TIERS {
+            for (_, answer) in batches.iter().filter(|(k, _)| *k == kind) {
+                for row in &answer.rows {
+                    if row.doc_id != 0 && !row.path.is_empty() {
+                        aliases
+                            .entry(row.doc_id)
+                            .or_insert_with(|| path_key(&row.path));
+                    }
+                }
+            }
+        }
+        let mut session = Self::default();
+        let mut seen = HashSet::new();
+        // 전수 Row는 복사하지 않고 승자만 세션으로 이동한다.
+        let mut batches = batches;
+        batches.sort_by_key(|(kind, _)| match kind {
+            ResultKind::Names => 0,
+            ResultKind::Hierarchy => 1,
+            _ => 2,
+        });
+        for (kind, mut answer) in batches {
+            let i = match kind {
+                ResultKind::Names => 0,
+                ResultKind::Hierarchy => 1,
+                _ => 2,
+            };
+            for term in answer.terms {
+                if !session.terms.contains(&term) {
+                    session.terms.push(term);
+                }
+            }
+            if !answer.groups.is_empty() {
+                session.groups = answer.groups;
+            }
+            if !answer.folder_counts.is_empty() {
+                session.folder_counts = answer.folder_counts;
+            }
+            if !answer.autocompletes.is_empty() {
+                session.autocompletes = answer.autocompletes;
+            }
+            for (ordinal, mut row) in answer.rows.drain(..).enumerate() {
+                let key = identity(&row, &aliases, kind, ordinal);
+                if seen.insert(key) {
+                    row.match_kinds = vec![kind];
+                    row.rank = session.tiers[i].len();
+                    session.tiers[i].push(row);
+                }
+            }
+        }
+        session
+    }
+
+    pub fn totals(&self) -> [usize; 3] {
+        self.tiers.each_ref().map(Vec::len)
+    }
+
+    /// 커서는 세션 내부 위치이며 다른 세션과 섞지 않는다. limit=0은 오류.
+    pub fn page(&self, cursor: Cursor, limit: usize) -> Result<Page> {
+        if limit == 0
+            || cursor
+                .0
+                .iter()
+                .zip(&self.tiers)
+                .any(|(n, rows)| *n > rows.len())
+        {
+            return Err("잘못된 통합 검색 페이지 요청".into());
+        }
+        let mut next = cursor;
+        let mut rows = Vec::new();
+        let limit = limit.min(OUTPUT_LIMIT);
+        for (i, (_, cap)) in TIERS.into_iter().enumerate() {
+            let count = cap
+                .min(limit - rows.len())
+                .min(self.tiers[i].len() - cursor.0[i]);
+            rows.extend_from_slice(&self.tiers[i][cursor.0[i]..cursor.0[i] + count]);
+            next.0[i] += count;
+        }
+        let has_more = next
+            .0
+            .iter()
+            .zip(&self.tiers)
+            .any(|(n, rows)| *n < rows.len());
+        Ok(Page {
+            answer: Answer {
+                rows,
+                terms: self.terms.clone(),
+                groups: self.groups.clone(),
+                folder_counts: self.folder_counts.clone(),
+                autocompletes: self.autocompletes.clone(),
+            },
+            next: has_more.then_some(next),
+            totals: self.totals(),
+        })
+    }
+}
+
+/// 첫 파일명은 20개만 요청해 먼저 발행한다. 이후 top=0은 명시적 전수 계약이다.
+/// 상위 원천 실패 때 하위 단을 확정하지 않고 오류와 이미 검증된 단만 남긴다.
+pub fn collect(
+    limit: usize,
+    cancel: &AtomicBool,
+    fetch: impl FnMut(ResultKind, usize) -> Result<Answer>,
+    publish: impl FnMut(Snapshot),
+) -> Result<Session> {
+    collect_with(limit, cancel, false, fetch, publish)
+}
+
+/// `keep_lower_without_names`: 앱 통합 보기(INTEG119)는 파일명 원천이 실패해도 위계·본문을 보인다.
+/// 이때도 세션은 `Incomplete`이고 실패 사유가 `errors`에 남는다.
+pub fn collect_with(
+    limit: usize,
+    cancel: &AtomicBool,
+    keep_lower_without_names: bool,
+    mut fetch: impl FnMut(ResultKind, usize) -> Result<Answer>,
+    mut publish: impl FnMut(Snapshot),
+) -> Result<Session> {
+    let check = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err("검색 취소".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    let first = fetch(ResultKind::Names, limit.min(20).max(1));
+    check()?;
+    let mut provisional = None;
+    if let Ok(first) = first {
+        provisional = Some(first.clone());
+        let session = Session::from_complete(vec![(ResultKind::Names, first)]);
+        publish(Snapshot {
+            answer: session.page(Cursor::default(), limit)?.answer,
+            completed: ResultKind::Names,
+            final_part: false,
+            errors: Vec::new(),
+        });
+    }
+    let mut batches = Vec::new();
+    let mut errors = Vec::new();
+    for (kind, _) in TIERS {
+        check()?;
+        let mut stop = false;
+        match fetch(kind, 0) {
+            Ok(answer) => batches.push((kind, answer)),
+            Err(error) => {
+                stop = !(keep_lower_without_names && kind == ResultKind::Names);
+                if kind == ResultKind::Names {
+                    if let Some(first) = provisional.take() {
+                        batches.push((kind, first));
+                    }
+                }
+                errors.push(format!("{} 전수 조회: {error}", label(kind)));
+            }
+        }
+        check()?;
+        // 파일명 첫 화면은 이미 발행했다. 다음 위계 스냅샷에 전수 이름을 반영해
+        // 같은 첫 페이지를 한 번 더 그리는 비용을 피한다.
+        if kind == ResultKind::Names && provisional.is_some() && errors.is_empty() {
+            continue;
+        }
+        // 첫 화면만 복사한다. 전수 응답 복제는 하지 않는다.
+        let mut answer = preview(&batches, limit);
+        for (_, part) in &batches {
+            for term in &part.terms {
+                if !answer.terms.contains(term) {
+                    answer.terms.push(term.clone());
+                }
+            }
+            if !part.groups.is_empty() {
+                answer.groups = part.groups.clone();
+            }
+            if !part.folder_counts.is_empty() {
+                answer.folder_counts = part.folder_counts.clone();
+            }
+            if !part.autocompletes.is_empty() {
+                answer.autocompletes = part.autocompletes.clone();
+            }
+        }
+        publish(Snapshot {
+            answer,
+            completed: kind,
+            final_part: kind == ResultKind::Body || stop,
+            errors: errors.clone(),
+        });
+        if stop {
+            break;
+        }
+    }
+    check()?;
+    let mut session = Session::from_complete(batches);
+    if !errors.is_empty() {
+        session.state = SessionState::Incomplete;
+    }
+    session.errors = errors;
+    Ok(session)
+}
+
+/// 전역 중복 검사는 전수에 적용하되 발행하는 Row 복사는 첫 페이지로 제한한다.
+fn preview(batches: &[(ResultKind, Answer)], limit: usize) -> Answer {
+    let mut aliases = HashMap::new();
+    for (kind, _) in TIERS {
+        for (_, answer) in batches.iter().filter(|(k, _)| *k == kind) {
+            for row in &answer.rows {
+                if row.doc_id != 0 && !row.path.is_empty() {
+                    aliases
+                        .entry(row.doc_id)
+                        .or_insert_with(|| path_key(&row.path));
+                }
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut rows = Vec::new();
+    for (kind, cap) in TIERS {
+        let mut count = 0;
+        for (_, answer) in batches.iter().filter(|(k, _)| *k == kind) {
+            for (ordinal, row) in answer.rows.iter().enumerate() {
+                let key = identity(row, &aliases, kind, ordinal);
+                if !seen.insert(key) || count >= cap || rows.len() >= limit.min(OUTPUT_LIMIT) {
+                    continue;
+                }
+                let mut row = row.clone();
+                row.match_kinds = vec![kind];
+                row.rank = count;
+                rows.push(row);
+                count += 1;
+            }
+        }
+    }
+    Answer {
+        rows,
+        ..Answer::default()
+    }
+}
+
+fn identity(row: &Row, aliases: &HashMap<u64, String>, kind: ResultKind, ordinal: usize) -> String {
+    if row.doc_id != 0 {
+        aliases
+            .get(&row.doc_id)
+            .cloned()
+            .unwrap_or_else(|| format!("id:{}", row.doc_id))
+    } else if !row.path.is_empty() {
+        path_key(&row.path)
+    } else {
+        format!("anonymous:{kind:?}:{ordinal}")
     }
 }
 
@@ -565,6 +903,16 @@ mod tests {
         let mut rows = vec![row("/unknown", 1)];
         filter_name_dates(&mut rows, dates);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn folder_names_are_asked_separately_unless_a_file_type_is_chosen() {
+        let text = folder_names_query("공사; 계약", None, None).unwrap();
+        assert_eq!(kfind_core::split_semicolon_groups(&text).len(), 2);
+        assert!(text.contains("folder:") && !text.contains("file:"), "{text}");
+        assert!(folder_names_query("공사 ext:hwp;pdf", None, None).is_none());
+        // 파일 질의는 전과 같이 파일만 받는다.
+        assert!(names_query("공사", None, None, None).0.ends_with("file:"));
     }
 
     #[test]

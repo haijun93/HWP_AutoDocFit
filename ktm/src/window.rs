@@ -39,6 +39,8 @@ use windows_sys::Win32::{
 const READY: u32 = WM_APP + 21;
 const QUICK_SEARCH_EMPTY_HINT: &str = "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기";
 const WARMED: u32 = WM_APP + 22;
+/// 통합 검색의 빈 중간 화면만 한 번 미룬다. 결과 도착·숨김 때 해제한다.
+const LOADING_PAINT_TIMER: usize = 1;
 pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
@@ -91,16 +93,22 @@ struct WorkTimes {
 }
 
 enum Reply {
+    UnifiedSession(u64, ktm::backend::unified::Session),
     Unified(u64, ktm::backend::unified::Snapshot, Instant, WorkTimes),
     Search(u64, Tab, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
     TopTopics(Vec<String>),
+    /// 파일명 0건일 때 확인한 검색 범위.
+    Coverage(u64, ktm::notice::NameCoverage),
 }
 
 struct Ui {
     state: State,
     rows: Vec<Row>,
     combined_batches: Vec<(tm_state::ResultKind, Vec<Row>)>,
+    unified_session: Option<ktm::backend::unified::Session>,
+    unified_cursors: Vec<ktm::backend::unified::Cursor>,
+    unified_page: usize,
     terms: Vec<String>,
     edit: HWND,
     within_edit: HWND,
@@ -114,7 +122,10 @@ struct Ui {
     glyph: HFONT,
     glyph_big: HFONT,
     brush: HBRUSH,
-    theme: String,
+    /// `--theme` 인자로 고정한 테마. 사용자가 창에서 바꾸면 풀린다.
+    forced_theme: Option<String>,
+    /// 앱 본체 설정 파일(`theme_mode`를 읽기만 한다).
+    app_settings: Option<PathBuf>,
     tx: Arc<(Mutex<Pending>, Condvar)>,
     rx: mpsc::Receiver<Reply>,
     status: mpsc::Sender<String>,
@@ -123,9 +134,17 @@ struct Ui {
     first_input_paint: Option<Instant>,
     last_input_paint_ms: Option<f64>,
     unified_paint: Option<(Instant, bool)>,
+    unified_names_painted: bool,
+    loading_painted: bool,
+    loading_timer_fires: usize,
     /// External input clock, populated only by the isolated measurement probe.
     probe_input: Option<Instant>,
     ready_at: Option<Instant>,
+    /// 이번 검색의 소요 시간. `timing`은 첫 그림 뒤 비우므로 요약 줄은 이 값을 쓴다.
+    elapsed_secs: Option<f64>,
+    coverage: Option<ktm::notice::NameCoverage>,
+    /// 받은 결과가 설정(제외 폴더·하위 폴더)에서 모두 빠졌다.
+    hidden_by_settings: bool,
     hotkey: String,
     hotkey_error: String,
     cancel: Arc<AtomicBool>,
@@ -268,22 +287,40 @@ fn palette() -> ui_theme::Palette {
     ui_theme::palette()
 }
 
-fn sync_theme(theme_str: &str) {
-    let pref = match theme_str {
-        "light" => ui_theme::ThemePref::Light,
-        "dark" => ui_theme::ThemePref::Dark,
-        _ => ui_theme::ThemePref::System,
+/// 설정·앱 설정·Windows 상태를 다시 읽어 테마를 맞춘다. 창을 열 때마다, 설정을 바꿨을 때,
+/// 테마 알림을 받았을 때 부른다. 색이 바뀌었을 때만 틀과 입력칸까지 다시 칠한다.
+unsafe fn apply_current_theme(h: HWND) {
+    let (forced, quick, app, edits) = with(|u| {
+        (u.forced_theme.clone(), u.settings.ui_theme.clone(), u.app_settings.clone(),
+         [u.edit, u.within_edit, u.days_edit])
+    });
+    let pref = match forced {
+        Some(value) => ui_theme::ThemePref::parse(&value),
+        None => ktm::theme::decide(&quick, app.as_deref().and_then(ktm::theme::app_theme_mode).as_deref()),
     };
-    #[cfg(windows)]
-    {
-        let _ = ui_theme::refresh(pref);
+    if ui_theme::refresh(pref).look {
+        unsafe {
+            frame::apply_theme(h);
+            for window in [h].into_iter().chain(edits) {
+                InvalidateRect(window, null(), 1);
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        let is_dark = pref == ui_theme::ThemePref::Dark;
-        let theme = ui_theme::Theme::derive(pref, is_dark, false, &ui_theme::SysColors::default());
-        ui_theme::store(theme);
-    }
+}
+
+/// Ctrl+L: 지금 보이는 색의 반대를 `ui_theme`에 저장한다.
+unsafe fn toggle_theme(h: HWND) {
+    let Some(next) = ktm::theme::toggled(ui_theme::theme().kind) else { return };
+    let path = edit(|u| {
+        u.forced_theme = None;
+        u.settings.ui_theme = next.into();
+        u.settings_path.clone()
+    });
+    // 디스크의 다른 값(최근 검색어 등)은 그대로 두고 테마만 바꿔 저장한다.
+    let mut loaded = Settings::load(&path).unwrap_or_default();
+    loaded.ui_theme = next.into();
+    let _ = loaded.save(&path);
+    unsafe { apply_current_theme(h) };
 }
 
 /// 프로그램이 검색/결과-내-검색 입력칸 텍스트를 반영할 때 한글 IME 조합을 끊지 않고 내용이 다를 때만 갱신한다.
@@ -335,31 +372,34 @@ fn event(h: HWND, e: Event) {
     let need_body_snippets = matches!(&e, Event::SetExcludeFilename(true));
     let record_recent_search = matches!(&e, Event::Submit | Event::ApplyHistory(_));
     let (effects, query_changed, within_changed, history_changed) = edit(|u| {
+        let previous_generation = u.state.generation;
         let prev_query = u.state.query.clone();
         let prev_within = u.state.options.within_query.clone();
         let prev_recent = u.state.recent_queries.clone();
         let prev_fav = u.state.favorite_queries.clone();
-        if matches!(
-            &e,
-            Event::Input(_)
-                | Event::SwitchTab(_)
-                | Event::Hide
-                | Event::Submit
-                | Event::SetDateFilter(_)
-                | Event::SetFolderFilter(_)
-                | Event::ApplyAutocomplete(_)
-                | Event::ApplyTopTopic(_)
-                | Event::ApplyHistory(_)
-        ) {
-            u.cancel.store(true, Ordering::Relaxed);
-        }
         let (s, fx) = tm_state::step(&u.state, e);
+        // 진행 중인 검색은 새 세대가 생길 때만 취소한다. 대신할 검색 없이 취소하면
+        // 같은 세대의 구간이 오류가 되거나 '검색 중'에 멈춘다.
+        if s.generation != u.state.generation {
+            u.cancel.store(true, Ordering::Relaxed);
+            u.elapsed_secs = None;
+            u.coverage = None;
+            u.hidden_by_settings = false;
+        }
         let changed = !user_input && s.query != prev_query;
         let within_changed = s.options.within_query != prev_within;
         let hist_changed = s.recent_queries != prev_recent
             || s.favorite_queries != prev_fav
             || (record_recent_search && !s.query.trim().is_empty());
         u.state = s;
+        if u.state.generation != previous_generation || u.state.phase == Phase::Hidden {
+            u.unified_session = None;
+            u.unified_cursors.clear();
+            u.unified_page = 0;
+            u.unified_names_painted = false;
+            u.loading_painted = false;
+            u.loading_timer_fires = 0;
+        }
         if need_body_snippets {
             let count = u.rows.len();
             request_snippets(u, count);
@@ -419,6 +459,8 @@ fn event(h: HWND, e: Event) {
         unsafe {
             match fx {
                 Effect::Show => {
+                    // 숨어 있는 동안 바뀐 앱·Windows 테마를 보이기 전에 반영한다.
+                    apply_current_theme(h);
                     let t = Instant::now();
                     let mut p = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut p);
@@ -535,7 +577,15 @@ fn event(h: HWND, e: Event) {
     });
     let _ = path.send(s.to_string());
     unsafe {
-        InvalidateRect(h, null(), 0);
+        let defer_loading = user_input && with(|u| u.settings.unified_search && u.state.phase == Phase::Searching);
+        if defer_loading {
+            // 빠른 파일명이 도착하면 Results 이벤트가 타이머를 해제하고 즉시 그린다.
+            // 느린 원천은 단발 타이머 이후 기존 검색 중 화면을 보여 준다.
+            if SetTimer(h, LOADING_PAINT_TIMER, 10, None) == 0 { InvalidateRect(h, null(), 0); }
+        } else {
+            KillTimer(h, LOADING_PAINT_TIMER);
+            InvalidateRect(h, null(), 0);
+        }
     }
 }
 
@@ -641,6 +691,35 @@ fn cycle_sort(h: HWND) {
     unsafe { InvalidateRect(h, null(), 0) };
 }
 
+/// 페이지는 같은 전역 스냅샷만 사용한다. 세대를 올려 이전 페이지의 발췌 응답을 차단한다.
+fn unified_page(h: HWND, forward: bool) {
+    let changed = edit(|u| {
+        if u.state.pending_parts != 0 || u.state.phase != Phase::Results { return false; }
+        let Some(session) = &u.unified_session else { return false; };
+        let target = if forward {
+            let Ok(page) = session.page(u.unified_cursors[u.unified_page], u.settings.bounded_max_results()) else { return false; };
+            let Some(next) = page.next else { return false; };
+            if u.unified_cursors.len() == u.unified_page + 1 { u.unified_cursors.push(next); }
+            u.unified_page + 1
+        } else if u.unified_page > 0 { u.unified_page - 1 } else { return false; };
+        let Ok(mut page) = session.page(u.unified_cursors[target], u.settings.bounded_max_results()) else { return false; };
+        let allowed = ktm::layout::filter_row_indices(&page.answer.rows, &u.settings, u.state.selected_folder.as_deref());
+        page.answer.rows = allowed.into_iter().map(|i|page.answer.rows[i].clone()).collect();
+        ktm::backend::unified::sort_within_tiers(&mut page.answer.rows, u.body_sort);
+        u.cancel.store(true, Ordering::Relaxed);
+        u.cancel = Arc::new(AtomicBool::new(false));
+        u.state.generation += 1;
+        u.rows = page.answer.rows;
+        u.state.result_count = u.rows.len();
+        u.state.selected = (!u.rows.is_empty()).then_some(0);
+        u.unified_page = target;
+        u.top = 0;
+        request_snippets(u, ktm::backend::SNIPPET_PREFETCH);
+        true
+    });
+    if changed { unsafe { InvalidateRect(h, null(), 0); } }
+}
+
 fn key(h: HWND, key: usize) -> bool {
     unsafe {
         if with(|u| u.modal.is_some()) {
@@ -680,6 +759,8 @@ fn key(h: HWND, key: usize) -> bool {
         let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
         let alt = GetKeyState(VK_MENU as i32) < 0;
         match key as u16 {
+            VK_NEXT if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, true); }
+            VK_PRIOR if ctrl && with(|u| u.unified_session.is_some()) => { unified_page(h, false); }
             VK_ESCAPE => event(h, Event::Hide),
             VK_RETURN => {
                 if ctrl {
@@ -695,20 +776,7 @@ fn key(h: HWND, key: usize) -> bool {
             // 탭 줄이 없어졌으므로 Tab 키는 검색창 포커스를 그대로 둔다.
             VK_TAB => {}
             _ if ctrl && key == b'S' as usize => cycle_sort(h),
-            _ if ctrl && key == b'L' as usize => {
-                let t = edit(|u| {
-                    u.theme = if u.theme == "dark" { "light" } else { "dark" }.into();
-                    sync_theme(&u.theme);
-                    u.theme.clone()
-                });
-                frame::apply_theme(h);
-                let path = with(|u| u.settings_path.clone());
-                let mut loaded = Settings::load(&path).unwrap_or_default();
-                loaded.theme = t;
-                let _ = loaded.save(&path);
-                InvalidateRect(h, null(), 1);
-                InvalidateRect(ed, null(), 1);
-            }
+            _ if ctrl && key == b'L' as usize => toggle_theme(h),
             _ if ctrl && (key == b'D' as usize || key == b'd' as usize) => {
                 event(h, Event::ToggleFavorite);
                 InvalidateRect(h, null(), 0);
@@ -935,8 +1003,9 @@ unsafe fn layout(h: HWND) {
     }
 }
 
-unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg: u32) {
+unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32) {
     unsafe {
+        let (mark_bg, mark_fg) = ktm::theme::term_mark(ui_theme::theme().kind, &palette());
         let saved = SaveDC(dc);
         // 한 줄에 다 들어가지 않는 이름은 칸 끝을 '…'로 표시한다(예전에는 글자가 중간에서 뚝 잘렸다).
         let full = wide(s);
@@ -961,9 +1030,8 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
                 let w = wide(part);
                 let mut size: SIZE = std::mem::zeroed();
                 GetTextExtentPoint32W(dc, w.as_ptr(), (w.len() - 1) as i32, &mut size);
-                // 강조 칸(노란 바탕)에서는 어두운 글자색을 써야 읽힌다(어두운 테마의 흰 글자는 안 보였다).
-                SetTextColor(dc, if marked { 0x202020 } else { fg });
-                SetBkColor(dc, bg);
+                SetTextColor(dc, if marked { mark_fg } else { fg });
+                SetBkColor(dc, mark_bg);
                 SetBkMode(
                     dc,
                     if marked {
@@ -1041,7 +1109,6 @@ unsafe fn draw_preview_lines(
     rc: RECT,
     line_step: i32,
     fg: u32,
-    bg: u32,
 ) {
     unsafe {
         let max_w = (rc.right - rc.left).max(10);
@@ -1055,7 +1122,7 @@ unsafe fn draw_preview_lines(
                 right: rc.right,
                 bottom: line_bottom,
             };
-            highlighted(dc, line, terms, line_rc, fg, bg);
+            highlighted(dc, line, terms, line_rc, fg);
         }
     }
 }
@@ -1145,12 +1212,16 @@ unsafe fn paint(h: HWND) {
             draw(h, dc, r);
         }
         EndPaint(h, &ps);
+        if with(|u| u.settings.unified_search && u.state.phase == Phase::Searching) {
+            edit(|u| u.loading_painted = true);
+        }
         if let Some(start)=edit(|u|u.first_input_paint.take()) {
             let elapsed=start.elapsed().as_secs_f64()*1000.0;
             edit(|u|u.last_input_paint_ms=Some(elapsed));
             log("first_input_paint_ms",elapsed);
         }
         if let Some((start, complete)) = edit(|u| u.unified_paint.take()) {
+            if !complete { edit(|u| u.unified_names_painted = true); }
             phase(if complete { "unified_complete_to_paint_ms" } else { "unified_names_to_paint_ms" }, start.elapsed());
             if let Some(input) = with(|u| u.probe_input) {
                 phase(if complete { "probe_input_to_complete_paint_ms" } else { "probe_input_to_names_paint_ms" }, input.elapsed());
@@ -1578,7 +1649,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 },
                 p.tab_bg,
             );
-            let elapsed = u.timing.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
             let display_ids = ktm::layout::settings_visible_indices(
                 &u.rows,
                 &u.settings,
@@ -1611,7 +1681,19 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 "☷"
             };
             // 파일명·본문 매치 수는 오른쪽 접기 단추(group_left~)에 따로 그리므로 여기에 또 쓰면 겹친다.
-            let summary = format!("{view}  {}개 · {:.2}초", display_ids.len(), elapsed);
+            let facts = ktm::notice::Facts {
+                phase: u.state.phase,
+                pending: u.state.parts_pending(),
+                error: u.state.error.as_deref(),
+                found: u.rows.len(),
+                visible: display_ids.len(),
+                hidden_by_settings: u.hidden_by_settings,
+                coverage: u.coverage.as_ref(),
+                scoped: u.state.date_filter != DateFilter::All
+                    || u.state.selected_ext.is_some()
+                    || u.state.selected_folder.is_some(),
+            };
+            let summary = format!("{view}  {}", ktm::notice::summary(facts, u.elapsed_secs));
             text(
                 &summary,
                 RECT {
@@ -1860,42 +1942,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
             }
 
-            // ⑥a 오류: 상태줄 한 줄로만 보이면 놓치므로 목록 자리에 안내를 크게 보인다.
-            if u.state.phase == Phase::Error {
-                if let Some(message) = &u.state.error {
+            // ⑥ 목록이 비면 이유를 목록 자리에 크게 보인다: 결과 없음 / 검색 못함·색인 준비 중 /
+            // 일부만 검색 / 조건 때문에 숨김. 상태줄 한 줄로만 보이면 놓친다.
+            if !u.state.query.trim().is_empty() {
+                if let Some(note) = ktm::notice::notice(facts) {
                     let ey = bands.list_top + scale(h, 12);
                     SelectObject(mem, u.title_font);
-                    text(
-                        "검색을 완료하지 못했습니다",
-                        RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) },
-                        p.text,
-                        0,
-                    );
+                    text(note.title, RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) }, p.text, 0);
                     SelectObject(mem, u.font);
                     SetTextColor(mem, p.text_sub);
-                    let ws = wide(message);
-                    let mut rc = RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 110) };
+                    let ws = wide(&note.detail);
+                    let mut rc = RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 130) };
                     DrawTextW(mem, ws.as_ptr(), (ws.len() - 1) as i32, &mut rc, DT_WORDBREAK | DT_NOPREFIX);
-                }
-            }
-
-            // ⑥b 결과가 없거나 검색 중일 때 빈 화면 대신 안내를 보인다.
-            if u.rows.is_empty() && !u.state.query.trim().is_empty() {
-                let note = match u.state.phase {
-                    // 오류는 위 ⑥a가 이미 제목·사유를 그린다(겹쳐 그리면 글자가 뭉개진다).
-                    Phase::Results => Some((
-                        "검색 결과가 없습니다",
-                        "철자·띄어쓰기를 바꾸거나, 기간·형식 조건을 '전체'로 바꿔 보세요.",
-                    )),
-                    Phase::Searching => Some(("검색 중…", "")),
-                    _ => None,
-                };
-                if let Some((title, detail)) = note {
-                    let ey = bands.list_top + scale(h, 12);
-                    SelectObject(mem, u.title_font);
-                    text(title, RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) }, p.text, 0);
-                    SelectObject(mem, u.font);
-                    text(detail, RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 54) }, p.text_sub, DT_END_ELLIPSIS);
                 }
             }
 
@@ -2065,7 +2123,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         bottom: gy + line_h1,
                     },
                     p.row_text(sel, p.text),
-                    0x8AF0FE,
                 ); }
                 if let Some(path_left) = path_left {
                     SelectObject(mem, u.small);
@@ -2274,7 +2331,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let pad_r = r.right - scale(h, 12);
                     let line_step = scale(h, 18);
                     let content_top = prev_y + scale(h, 6);
-                    let highlight_bg = 0x8AF0FE;
 
                     SelectObject(mem, u.small);
                     draw_preview_lines(
@@ -2289,7 +2345,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         },
                         line_step,
                         if no_preview { p.text_faint } else { p.text },
-                        highlight_bg,
                     );
                 }
             }
@@ -2324,6 +2379,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => ("검색 중…".into(), String::new()),
+                    Phase::Results if u.unified_session.is_some() => (
+                        format!("문서 {}건 · {}쪽", u.rows.len(), u.unified_page + 1),
+                        "Ctrl+PgUp 이전 · Ctrl+PgDn 이어보기".into(),
+                    ),
                     Phase::Results => (
                         format!("문서 {}건", u.rows.len()),
                         format!("폴더 {}개", u.state.folder_counts.len()),
@@ -2669,7 +2728,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         match s.ui_theme.as_str() {
                             "light" => "밝게".to_string(),
                             "dark" => "어둡게".to_string(),
-                            _ => "시스템".to_string(),
+                            _ => "앱 설정 따름".to_string(),
                         },
                         if s.default_search_mode == "filename" {
                             "파일명".to_string()
@@ -2872,6 +2931,16 @@ fn flush_metrics() {
 unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
     unsafe {
         match msg {
+            // Windows 어두운 모드·고대비·시스템 색 변경, 다른 도구의 DocFitThemeChanged 알림.
+            m if ui_theme::is_theme_message(m, w, l) => {
+                // 틀에 테마를 입히는 중 같은 알림이 되돌아와도 한 번만 처리한다.
+                thread_local!(static APPLYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+                if !APPLYING.replace(true) {
+                    apply_current_theme(h);
+                    APPLYING.set(false);
+                }
+                DefWindowProcW(h, msg, w, l)
+            }
             WM_NCCALCSIZE => {
                 // WS_THICKFRAME의 기본 계산이 남긴 우측 비클라이언트 띠가 자체 그리기와 겹쳤다.
                 0
@@ -2905,6 +2974,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             WM_PAINT => {
                 paint(h);
+                0
+            }
+            WM_TIMER if w == LOADING_PAINT_TIMER => {
+                KillTimer(h, LOADING_PAINT_TIMER);
+                if with(|u| u.state.phase == Phase::Searching) {
+                    edit(|u| u.loading_timer_fires += 1);
+                    InvalidateRect(h, null(), 0);
+                }
                 0
             }
             WM_ERASEBKGND => 1,
@@ -3301,6 +3378,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             let (s, path) = with(|u| (u.settings.clone(), u.settings_path.clone()));
                             let _ = s.save(&path);
+                            if settings_tab == 0 && idx == 0 {
+                                edit(|u| u.forced_theme = None);
+                                apply_current_theme(h);
+                            }
                             if settings_tab == 2 && idx == 0 {
                                 let exe = std::env::current_exe().unwrap_or_default();
                                 let enabled = with(|u| u.settings.autostart);
@@ -3849,6 +3930,25 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
+                        Reply::UnifiedSession(g, session) => {
+                            if g == with(|u| u.state.generation) && with(|u| u.state.phase) != Phase::Hidden {
+                                edit(|u| {
+                                    u.unified_cursors = vec![ktm::backend::unified::Cursor::default()];
+                                    u.unified_page = 0;
+                                    u.unified_session = Some(session);
+                                });
+                                InvalidateRect(h, null(), 0);
+                            }
+                            continue;
+                        }
+                        Reply::Coverage(g, coverage) => {
+                            edit(|u| {
+                                if g == u.state.generation {
+                                    u.coverage = Some(coverage);
+                                }
+                            });
+                            continue;
+                        }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
                                 if g == u.state.generation {
@@ -3878,6 +3978,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 u.state.selected.and_then(|i| u.rows.get(i)).map(|r| ktm::backend::unified::path_key(&r.path)),
                             ));
                             let allowed = ktm::layout::filter_row_indices(&answer.rows, &settings, folder.as_deref());
+                            let all_hidden = !answer.rows.is_empty() && allowed.is_empty();
                             answer.rows = allowed.into_iter().map(|i| answer.rows[i].clone()).collect();
                             ktm::backend::unified::sort_within_tiers(&mut answer.rows, with(|u| u.body_sort));
                             event(h, Event::SearchPartFinished {
@@ -3886,6 +3987,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             edit(|u| {
                                 u.rows = answer.rows;
+                                u.hidden_by_settings = all_hidden;
+                                u.elapsed_secs = Some(start.elapsed().as_secs_f64());
                                 u.terms = answer.terms;
                                 u.state.folder_counts = answer.folder_counts;
                                 u.state.autocompletes = answer.autocompletes;
@@ -3898,7 +4001,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 }
                                 u.timing.get_or_insert(start);
                                 u.ready_at.get_or_insert_with(Instant::now);
-                                if snapshot.completed == tm_state::ResultKind::Names || snapshot.final_part {
+                                if (snapshot.completed == tm_state::ResultKind::Names && !u.unified_names_painted) || snapshot.final_part {
                                     u.unified_paint = Some((start, snapshot.final_part));
                                 }
                             });
@@ -3930,6 +4033,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                         &settings,
                                         folder.as_deref(),
                                     );
+                                    let all_hidden = !rows.is_empty() && allowed.is_empty();
+                                    edit(|u| {
+                                        u.hidden_by_settings |= all_hidden;
+                                        u.elapsed_secs = Some(start.elapsed().as_secs_f64());
+                                    });
                                     let rows = allowed
                                         .into_iter()
                                         .filter_map(|i| rows.get(i).cloned())
@@ -3963,7 +4071,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 Err(message) => {
                                     if with(|u| u.state.tab) == Tab::All {
                                         eprintln!("combined search leg failed: {message}");
-                                        edit(|u| { u.leg_errors.push(message.clone()); });
+                                        let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
+                                        let message = format!("{}: {message}", ktm::backend::unified::label(kind));
+                                        edit(|u| { u.leg_errors.push(message.clone()); u.elapsed_secs = Some(start.elapsed().as_secs_f64()); });
                                         event(h, Event::SearchFailed { generation: g, message });
                                     } else {
                                         event(h, Event::SearchFailed { generation: g, message });
@@ -3991,6 +4101,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         ktm::install::autostart_command().as_deref(),
                         &exe,
                     );
+                    // 숨어 있는 동안 바뀐 테마를 트레이 메뉴에도 반영한다.
+                    apply_current_theme(h);
                     let line = with(|u| tray::status_line(&u.hotkey, &u.hotkey_error));
                     match tray::menu(h, &line, autostart) {
                         tray::SHOW => event(h, Event::Show),
@@ -4159,8 +4271,14 @@ pub fn run() -> Result<(), String> {
         );
         SendMessageW(days_ed, 0x00c5, 5, 0);
 
-        let initial_theme = arg("--theme").unwrap_or(settings.theme.clone());
-        sync_theme(&initial_theme);
+        // 캡처·시험 모드는 사용자의 앱 설정을 읽지 않는다.
+        let app_settings = arg("--app-settings").map(PathBuf::from).or_else(|| {
+            if capture_dir.is_some() || std::env::var_os("KTM_TEST_ROOT").is_some() {
+                Some(data.join("app-settings.json"))
+            } else {
+                ktm::theme::default_app_settings()
+            }
+        });
 
         UI.with(|u| {
             *u.borrow_mut() = Some(Ui {
@@ -4175,6 +4293,9 @@ pub fn run() -> Result<(), String> {
                 },
                 rows: Vec::new(),
                 combined_batches: Vec::new(),
+                unified_session: None,
+                unified_cursors: Vec::new(),
+                unified_page: 0,
                 terms: Vec::new(),
                 edit: ed,
                 within_edit: within_ed,
@@ -4188,7 +4309,8 @@ pub fn run() -> Result<(), String> {
                 glyph: null_mut(),
                 glyph_big: null_mut(),
                 brush: null_mut(),
-                theme: initial_theme,
+                forced_theme: arg("--theme"),
+                app_settings,
                 tx: pending.clone(),
                 rx,
                 status: status_tx,
@@ -4197,8 +4319,14 @@ pub fn run() -> Result<(), String> {
                 first_input_paint: None,
                 last_input_paint_ms: None,
                 unified_paint: None,
+                unified_names_painted: false,
+                loading_painted: false,
+                loading_timer_fires: 0,
                 probe_input: None,
                 ready_at: None,
+                elapsed_secs: None,
+                coverage: None,
+                hidden_by_settings: false,
                 hotkey: String::new(),
                 hotkey_error: String::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
@@ -4222,6 +4350,7 @@ pub fn run() -> Result<(), String> {
         });
 
         SetWindowLongPtrW(h, GWLP_WNDPROC, proc as *const () as isize);
+        apply_current_theme(h);
         frame::style_frame(h);
         create_fonts(h);
         layout(h);
@@ -4297,27 +4426,43 @@ pub fn run() -> Result<(), String> {
                         skip_cloud_network,
                     )) => {
                         let picked = Instant::now();
+                        // 파일명이 0건이면 색인 상태를 읽어(변경 없음) '없음'과 '못 찾아봄'을 구분한다.
+                        let report_coverage = |found: usize| {
+                            if found == 0 {
+                                let status = ktm::backend::pipe_names_status(&pipe_name);
+                                let coverage = ktm::notice::name_coverage(
+                                    status.as_ref().map_err(String::as_str),
+                                );
+                                let _ = tx.send(Reply::Coverage(g, coverage));
+                            }
+                        };
                         if tab == Tab::All {
                             // Only the opt-in adapter queues All as one job. The legacy
                             // path continues to queue the original three independent jobs.
                             let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            let _ = ktm::backend::unified::stream(max_results, &cancel, |kind, top| {
+                            let session = ktm::backend::unified::collect(max_results, &cancel, |kind, top| {
                                 use ktm::backend::unified::{source, Source};
                                 let source = source(kind, related_queries, pipe_mode);
                                 if source == Source::NamesRelated {
-                                    return ktm::backend::pipe_names_related(&pipe_name, &q, top);
+                                    let answer = if top == 0 {
+                                        ktm::backend::pipe_names_snapshot(&pipe_name, &q, sort, true)?
+                                    } else {
+                                        ktm::backend::pipe_names_related(&pipe_name, &q, top)?
+                                    };
+                                    report_coverage(answer.rows.len());
+                                    return Ok(answer);
                                 }
                                 if source == Source::Names {
-                                    let (text, dates) = ktm::backend::unified::names_query(&q, date_range, folder.as_deref(), ext.as_deref());
-                                    let mut rows = ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)?;
-                                    ktm::backend::unified::filter_name_dates(&mut rows, dates);
+                                    let rows = ktm::backend::unified::fetch_names(&pipe_name, &q, date_range,
+                                        folder.as_deref(), ext.as_deref(), sort, top, ext.is_none())?;
+                                    report_coverage(rows.len());
                                     return Ok(Answer { rows,
                                         terms: ktm::backend::unified::query_terms(&q),
                                         groups: kfind_core::split_semicolon_groups(&q),
                                         ..Answer::default() });
                                 }
                                 let hierarchy = kind == tm_state::ResultKind::Hierarchy;
-                                if source == Source::ContentPipe {
+                                if source == Source::ContentPipe && top != 0 {
                                     let text = ktm::backend::unified::scoped_query(&q, date_range, folder.as_deref(), ext.as_deref(), match_mode);
                                     let rows = ktm::backend::pipe_search_limit(&pipe_name, &text, hierarchy, top)?;
                                     return Ok(Answer { rows,
@@ -4326,6 +4471,11 @@ pub fn run() -> Result<(), String> {
                                         ..Answer::default() });
                                 }
                                 if backend.is_none() { backend = Some(open(&root)?); }
+                                if top == 0 {
+                                    return backend.as_mut().unwrap().search_snapshot(
+                                        &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
+                                        Some(cancel.clone()), skip_cloud_network);
+                                }
                                 backend.as_mut().unwrap().search_with_scope_ext_limit_cloud(
                                     &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
                                     top, Some(cancel.clone()), skip_cloud_network,
@@ -4334,18 +4484,29 @@ pub fn run() -> Result<(), String> {
                                 let _ = tx.send(Reply::Unified(g, snapshot, start, WorkTimes { picked, done: Instant::now() }));
                                 PostMessageW(handle as HWND, READY, 0, 0);
                             });
+                            if let Ok(session) = session {
+                                if !cancel.load(Ordering::Relaxed) {
+                                    let _ = tx.send(Reply::UnifiedSession(g, session));
+                                    PostMessageW(handle as HWND, READY, 0, 0);
+                                }
+                            }
                             continue;
                         }
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
-                                if related_queries { return ktm::backend::pipe_names_related(&pipe_name,&q,max_results); }
+                                if related_queries {
+                                    let answer = ktm::backend::pipe_names_related(&pipe_name, &q, max_results)?;
+                                    report_coverage(answer.rows.len());
+                                    return Ok(answer);
+                                }
                                 let rows = ktm::backend::pipe_names_limit(
                                     &pipe_name,
                                     &q,
                                     sort,
                                     max_results,
                                 )?;
+                                report_coverage(rows.len());
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
                                 return Ok(Answer {
                                     rows,
@@ -4562,6 +4723,12 @@ pub fn run() -> Result<(), String> {
 
         if let Some(output) = arg("--unified-measure") {
             probe::unified_measure(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-pages") {
+            probe::unified_pages(h, std::path::Path::new(&output))?;
+        }
+        if let Some(output) = arg("--unified-loading") {
+            probe::unified_loading(h, std::path::Path::new(&output))?;
         }
 
         let mut msg: MSG = std::mem::zeroed();

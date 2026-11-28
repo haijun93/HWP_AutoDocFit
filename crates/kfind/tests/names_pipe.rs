@@ -97,3 +97,35 @@ fn user_mode_build_query_status() {
     let q = call(&h, json!({"command":"names_query","id":8,"text":"새문서"})).unwrap();
     assert_eq!(q["total"], 1);
 }
+
+/// QMSBUG1: 대상을 하나도 읽지 못한 색인을 `ready`로 두면 모든 파일명 질의가 오류 없이 0건이 된다.
+#[test]
+fn unreadable_roots_fail_instead_of_becoming_an_empty_ready_index() {
+    let idx = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let h = Handler::new(idx.path().to_path_buf());
+    let missing = data.path().join("없는폴더").to_string_lossy().into_owned();
+    call(&h, json!({"command":"names_build","roots":[missing]})).unwrap();
+    let s = wait_ready(&h);
+    assert_eq!(s["state"], "failed", "{s}");
+    assert!(s["last_error"].as_str().unwrap().contains("unreadable"), "{s}");
+    let e = call(&h, json!({"command":"names_query","id":1,"text":"합의각서"})).unwrap_err().to_string();
+    assert!(e.contains("unavailable (failed)"), "{e}");
+
+    // 이미 쓸 수 있는 색인이 있으면 실패한 다시 만들기는 옛 색인을 유지한다.
+    std::fs::write(data.path().join("합의각서(합성).hwp"), b"").unwrap();
+    call(&h, json!({"command":"names_build","roots":[data.path()]})).unwrap();
+    assert_eq!(wait_ready(&h)["state"], "ready");
+    call(&h, json!({"command":"names_build","roots":[missing]})).unwrap();
+    let s = wait_ready(&h);
+    assert_eq!(s["state"], "ready", "{s}");
+    assert!(s["last_error"].is_string(), "{s}");
+    let q = call(&h, json!({"command":"names_query","id":2,"text":"합의각서"})).unwrap();
+    assert_eq!(q["total"], 1);
+
+    // 읽을 수 있지만 비어 있는 폴더는 실패가 아니다.
+    let empty = tempfile::tempdir().unwrap();
+    let h = Handler::new(idx.path().to_path_buf());
+    call(&h, json!({"command":"names_build","roots":[empty.path()]})).unwrap();
+    assert_eq!(wait_ready(&h)["state"], "ready");
+}

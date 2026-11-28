@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart';
 import 'related_documents_dialog.dart';
 import 'timemachine_api.dart';
 import 'timemachine_thumbnails.dart';
+import 'unified_search.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
 import '../../core/instant_search.dart';
@@ -67,6 +68,12 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     onError: _searchFailed,
   );
   TextEditingController get _search => _searchBox.text;
+  // 통합 보기(파일명 > 위계 > 본문). 기본은 끔이며, 끄면 기존 3탭 그대로다.
+  bool _unifiedView = false;
+  // 통합 검색 기간은 따로 둔다. 기본은 전체(null)이고, 통합 보기에서 고른 기간만 따른다.
+  DateTime? _unifiedStart, _unifiedEnd;
+  int? _unifiedCustomDays;
+  late final UnifiedSearchController _unified = UnifiedSearchController(_api);
   final Set<String> _selectedKinds = {};
   String _query = '';
   bool _contentMode = false, _contentIndexRunning = false;
@@ -119,7 +126,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   @override
   void initState() { super.initState(); _load(firstOpen: true); _scroll.addListener(_onScroll); _pollDeveloperMode(); }
   @override
-  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _previewFind.dispose(); _customDays.dispose(); super.dispose(); }
+  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _unified.dispose(); _previewFind.dispose(); _customDays.dispose(); super.dispose(); }
 
   void _pollDeveloperMode() {
     _developerModePoll?.cancel();
@@ -336,6 +343,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   /// 검색 컨트롤러가 부르는 실제 검색. 늦게 온 응답은 컨트롤러가 요청 번호로 버린다.
   Future<_ContentSearchOutcome?> _runSearch(InstantSearchRequest request) async {
     final query = request.query;
+    if (request.tab == 'unified') {
+      _query = '';
+      setState(() { _selectedContentResult = null; _preview = null; });
+      unawaited(_unified.start(query, {
+        if (_selectedKinds.isNotEmpty) 'kinds': _selectedKinds.toList(),
+        ..._rangeArgs(_unifiedStart, _unifiedEnd),
+      }));
+      return null;
+    }
     if (request.tab == 'file') {
       _query = query;
       unawaited(_filtersChanged());
@@ -385,6 +401,12 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   /// 검색어가 기준 미만이 되면 그 탭의 결과를 비운다(파일명 탭은 기간 전체 타임라인으로 돌아간다).
   void _searchCleared(String tab, String query) {
     if (!mounted) return;
+    if (tab == 'unified') {
+      _query = '';
+      _unified.clear();
+      setState(() { _selectedContentResult = null; _preview = null; });
+      return;
+    }
     if (tab == 'file') {
       _query = '';
       unawaited(_filtersChanged());
@@ -665,6 +687,86 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     _searchBox.selectTab(mode);
   }
 
+  /// 통합 보기 전환. 검색어는 남기고 바뀐 보기에서 곧바로 찾는다.
+  void _applyUnifiedView(bool enabled) {
+    if (enabled == _unifiedView) return;
+    setState(() {
+      _unifiedView = enabled;
+      _contentSearchRevision++;
+      _fileSearchRevision++;
+      _contentMode = false;
+      _relatedMode = false;
+      _contentResults = [];
+      _selectedContentResult = null;
+      _preview = null;
+      _showOperatorHelp = false;
+      _fileSearchResults = [];
+      _fileSearchActive = false;
+      _query = '';
+    });
+    if (!enabled) _unified.close();
+    _searchBox.selectTab(enabled ? 'unified' : 'file');
+  }
+
+  Future<void> _setUnifiedView(bool enabled) async {
+    _applyUnifiedView(enabled);
+    // 기간 타임라인에 남은 이름 거르기를 지운다.
+    unawaited(_filtersChanged());
+    Map<String, Object?> saved;
+    try {
+      saved = await _api.command('unified_view_set', {'enabled': enabled});
+    } catch (_) {
+      saved = {'ok': false};
+    }
+    if (mounted && saved['ok'] != true) {
+      setState(() => _error = '통합 보기 선택을 저장하지 못했습니다. 이번에는 그대로 사용합니다.');
+    }
+  }
+
+  /// 기간·종류·조사 폴더가 바뀌면 통합 검색을 다시 한다.
+  void _refreshUnified() {
+    if (_unifiedView) _searchBox.refresh();
+  }
+
+  TimemachineContentResult _unifiedResult(UnifiedRow row) {
+    final dot = row.name.lastIndexOf('.');
+    return TimemachineContentResult.fromJson({
+      'path': row.path, 'name': row.name, 'snippet': row.snippet,
+      'kind': dot < 0 ? '' : row.name.substring(dot + 1).toLowerCase(),
+    }, query: _search.text.trim());
+  }
+
+  Future<void> _revealPath(String path) async {
+    try {
+      final response = await _api.command('reveal', {'path': path});
+      if (!mounted) return;
+      setState(() => _error = response['ok'] == true ? null : '${response['message'] ?? '폴더를 열지 못했습니다.'}');
+    } catch (_) {
+      if (mounted) setState(() => _error = '폴더를 열지 못했습니다. 앱 연결을 확인해 주세요.');
+    }
+  }
+
+  Widget _unifiedArea() => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(
+        flex: 3,
+        child: UnifiedResultsView(
+          controller: _unified,
+          marked: _markedTerms,
+          selectedPath: _selectedContentResult?.path,
+          onPreview: (row) => _previewContentResult(_unifiedResult(row)),
+          onOpen: (row) => _openDocument({'path': row.path}),
+          onReveal: (row) => _revealPath(row.path),
+        ),
+      ),
+      if (_selectedContentResult != null) ...[
+        const VerticalDivider(width: 1),
+        Expanded(flex: 2, child: _contentPreviewPane()),
+      ],
+    ],
+  );
+
   Future<void> _load({bool firstOpen = false}) async {
     Map<String, Object?> status;
     Map<String, Object?> settings;
@@ -701,6 +803,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
     setState(() { _settings = loaded; _developerMode = developerMode; _watchByAgent = status['watch'] == 'agent';
       if (status['ok'] != true) _error = '${status['message'] ?? '상태를 불러오지 못했습니다.'}'; });
+    _applyUnifiedView(loaded['unified_view'] == true);
     await _readContentStatus();
     if (!mounted) return;
     if (loaded['enabled'] == true) {
@@ -742,10 +845,21 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Map<String, Object?> get _filters => {'roots': _settings?['roots'] ?? [],
     'kinds': _selectedKinds.isEmpty ? null : _selectedKinds.toList(), 'query': _query};
-  Map<String, Object?> get _searchRangePayload => {
-    if (_start != null && _end != null) 'start': _start!.millisecondsSinceEpoch / 1000,
-    if (_start != null && _end != null) 'end': _end!.millisecondsSinceEpoch / 1000,
+  Map<String, Object?> get _searchRangePayload => _rangeArgs(_start, _end);
+  Map<String, Object?> _rangeArgs(DateTime? start, DateTime? end) => {
+    if (start != null && end != null) 'start': start.millisecondsSinceEpoch / 1000,
+    if (start != null && end != null) 'end': end.millisecondsSinceEpoch / 1000,
   };
+  /// 기간 단추에 보이는 기간(통합 보기는 통합 검색 기간).
+  DateTime? get _shownStart => _unifiedView ? _unifiedStart : _start;
+  DateTime? get _shownEnd => _unifiedView ? _unifiedEnd : _end;
+  int? get _shownCustomDays => _unifiedView ? _unifiedCustomDays : _selectedCustomDays;
+  void _keepUnifiedRange() {
+    if (!_unifiedView) return;
+    _unifiedStart = _start;
+    _unifiedEnd = _end;
+    _unifiedCustomDays = _selectedCustomDays;
+  }
   Future<void> _refreshDays() async {
     final revision = ++_calendarRevision;
     final requestedMonth = _month;
@@ -842,7 +956,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
   Future<void> _saveSettings(Map<String,Object?> next) async {
     final response=await _api.command('settings_set',next);
-    if(response['ok']==true){setState(()=>_settings=Map<String,Object?>.from(response['settings'] as Map));await _filtersChanged();}
+    if(response['ok']==true){setState(()=>_settings=Map<String,Object?>.from(response['settings'] as Map));_refreshUnified();await _filtersChanged();}
     else if(mounted){setState(()=>_error='${response['message'] ?? '설정을 저장하지 못했습니다.'}');}
   }
   Future<void> _pickExtensions() async {
@@ -889,11 +1003,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         _firstDay = chosen; _start = chosen; _end = chosen.add(const Duration(days: 1));
       }
       _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
+      _keepUnifiedRange();
     });
     setState(() => _month = DateTime(chosen.year, chosen.month));
     _refreshHourDensity();
     if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
     if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
+    _refreshUnified();
     await _loadPage();
   }
   bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
@@ -912,11 +1028,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (mode == '6m') { final first = DateTime(today.year,today.month-6,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
       if (mode == '1y') { final first = DateTime(today.year-1,today.month,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
       _firstDay = null; _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
+      _keepUnifiedRange();
     });
     await _refreshDays();
     if (_start == null || _end == null) setState(() => _days = {});
     if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
     if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
+    _refreshUnified();
     _refreshHourDensity(); await _loadPage();
   }
   Future<void> _applyCustomDays() async {
@@ -937,7 +1055,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (mounted) setState(() => _error = '다시 훑지 못했습니다. 앱 연결을 확인해 주세요.');
     }
   }
-  Future<void> _openItem(TimemachineItem item) => _openDocument({'id': item.id});
+  Future<void> _openItem(TimemachineItem item) =>
+      _openDocument(item.id > 0 ? {'id': item.id} : {'path': item.fullPath});
   Future<void> _revealItem(TimemachineItem item) async {
     try { final response = await _api.command('reveal', {'id':item.id});
       if (response['ok'] != true && mounted) setState(() => _error = '${response['message'] ?? '폴더를 열지 못했습니다.'}');
@@ -1035,7 +1154,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
               ],
             ),
           Expanded(
-            child: (_contentMode || _relatedMode)
+            child: _unifiedView
+                ? ListenableBuilder(
+                    listenable: _searchBox,
+                    // 검색어가 없으면 기존 기간 타임라인을 보인다.
+                    builder: (context, _) => _searchBox.phase == InstantSearchPhase.empty
+                        ? _timelineArea(isNarrow, calendar, timeline)
+                        : _unifiedArea(),
+                  )
+                : (_contentMode || _relatedMode)
                 ? Column(children: [if (_contentMode) _contentSearchPanel(), Expanded(child: _contentResultsView())])
                 : (_fileTableView && _fileSearchSupported
                     ? Row(children: [
@@ -1045,32 +1172,34 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                           Expanded(flex: 2, child: _contentPreviewPane()),
                         ],
                       ])
-                    : (isNarrow
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _densityBar(vertical: false),
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxHeight: 180),
-                                child: SingleChildScrollView(child: calendar),
-                              ),
-                              Expanded(child: timeline),
-                            ],
-                          )
-                        : Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _densityBar(vertical: true),
-                              Expanded(child: timeline),
-                              SizedBox(width: 320, child: SingleChildScrollView(child: calendar)),
-                            ],
-                          ))),
+                    : _timelineArea(isNarrow, calendar, timeline)),
           ),
         ],
       );
     });
   }
 
+
+  Widget _timelineArea(bool isNarrow, Widget calendar, Widget timeline) => isNarrow
+      ? Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _densityBar(vertical: false),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: SingleChildScrollView(child: calendar),
+            ),
+            Expanded(child: timeline),
+          ],
+        )
+      : Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _densityBar(vertical: true),
+            Expanded(child: timeline),
+            SizedBox(width: 320, child: SingleChildScrollView(child: calendar)),
+          ],
+        );
 
   Widget _operatorHelp() => Card(
     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1452,10 +1581,10 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                             final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
                             final sizeKb = (item.size / 1024).toStringAsFixed(1);
                             return InkWell(
-                              key: ValueKey('tm-file-row-${item.id}'),
-                              onTap: () => _previewContentResult(TimemachineContentResult.fromJson({
-                                'id': item.id, 'name': item.name, 'folder': item.folder,
-                                'path': '${item.folder}\\${item.name}', 'kind': item.kind,
+                              key: ValueKey('tm-file-row-${item.id > 0 ? item.id : item.fullPath}'),
+                              onTap: item.kind == 'folder' ? () {} : () => _previewContentResult(TimemachineContentResult.fromJson({
+                                if (item.id > 0) 'id': item.id, 'name': item.name, 'folder': item.folder,
+                                'path': item.fullPath, 'kind': item.kind,
                               }, query: _search.text.trim())),
                               onDoubleTap: () => _openItem(item),
                               child: Padding(
@@ -1474,7 +1603,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                                     const SizedBox(width: 12),
                                     SizedBox(
                                       width: _fileColumnWidths['size'] ?? 100,
-                                      child: Text('${sizeKb}KB', overflow: TextOverflow.ellipsis),
+                                      child: Text(item.kind == 'folder' ? '' : '${sizeKb}KB', overflow: TextOverflow.ellipsis),
                                     ),
                                     const SizedBox(width: 12),
                                     SizedBox(
@@ -1484,7 +1613,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                                     const SizedBox(width: 12),
                                     SizedBox(
                                       width: _fileColumnWidths['kind'] ?? 100,
-                                      child: Text(item.kind, overflow: TextOverflow.ellipsis),
+                                      child: Text(item.kind == 'folder' ? '폴더' : item.kind, overflow: TextOverflow.ellipsis),
                                     ),
                                   ],
                                 ),
@@ -1670,6 +1799,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   void _toggleKind(String kind, bool value) {
     setState(() => value ? _selectedKinds.add(kind) : _selectedKinds.remove(kind));
     _filtersChanged();
+    _refreshUnified();
     if (_fileTableView && _fileSearchSupported) _runFileSearch(_activeQuery);
   }
 
@@ -1739,7 +1869,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         suffixIcon: _searchBox.isSearching
             ? const Tooltip(message: '찾는 중', child: Icon(Icons.hourglass_top, key: ValueKey('tm-search-busy'), size: 16))
             : null,
-        hintText: _relatedMode ? '위계 검색' : _contentMode ? '본문 검색' : '이름 찾기',
+        hintText: _unifiedView ? '파일명·위계·본문 찾기' : _relatedMode ? '위계 검색' : _contentMode ? '본문 검색' : '이름 찾기',
         isDense: true,
       ),
       onSubmitted: (_) => _searchBox.submit(),
@@ -1829,18 +1959,19 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   );
 
   String get _periodSelection {
-    if (_start == null || _end == null) return 'all';
+    final start = _shownStart, end = _shownEnd;
+    if (start == null || end == null) return 'all';
     final now=DateTime.now(); final today=DateTime(now.year,now.month,now.day);
-    if (_sameDay(_start!,today) && _end == today.add(const Duration(days:1))) return 'today';
-    if (_start == _sundayStart(now) && _end == _start!.add(const Duration(days:7))) return 'week';
-    if (_start == DateTime(now.year,now.month) && _end == DateTime(now.year,now.month+1)) return 'month';
-    if (_selectedCustomDays != null) return 'custom';
+    if (_sameDay(start,today) && end == today.add(const Duration(days:1))) return 'today';
+    if (start == _sundayStart(now) && end == start.add(const Duration(days:7))) return 'week';
+    if (start == DateTime(now.year,now.month) && end == DateTime(now.year,now.month+1)) return 'month';
+    if (_shownCustomDays != null) return 'custom';
     for (final days in [7,30,90]) {
-      if (_start == today.subtract(Duration(days:days-1)) && _end == today.add(const Duration(days:1))) return '$days';
+      if (start == today.subtract(Duration(days:days-1)) && end == today.add(const Duration(days:1))) return '$days';
     }
-    if (_end == today.add(const Duration(days:1))) {
-      if (_start == DateTime(today.year,today.month-6,today.day)) return '6m';
-      if (_start == DateTime(today.year-1,today.month,today.day)) return '1y';
+    if (end == today.add(const Duration(days:1))) {
+      if (start == DateTime(today.year,today.month-6,today.day)) return '6m';
+      if (start == DateTime(today.year-1,today.month,today.day)) return '1y';
     }
     return 'custom';
   }
@@ -1850,12 +1981,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     for (final item in _periodPresets) {
       if (item.$1 == sel) return item.$2;
     }
-    if (_selectedCustomDays != null) return '$_selectedCustomDays일';
-    if (_start != null && _end != null) {
-      final last = _end!.subtract(const Duration(days: 1));
-      return _sameDay(_start!, last)
-          ? '${_start!.month}.${_start!.day}'
-          : '${_start!.month}.${_start!.day}~${last.month}.${last.day}';
+    if (_shownCustomDays != null) return '$_shownCustomDays일';
+    final start = _shownStart, end = _shownEnd;
+    if (start != null && end != null) {
+      final last = end.subtract(const Duration(days: 1));
+      return _sameDay(start, last)
+          ? '${start.month}.${start.day}'
+          : '${start.month}.${start.day}~${last.month}.${last.day}';
     }
     return '기간 없음 (전체)';
   }
@@ -1875,10 +2007,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     OutlinedButton.icon(key:const ValueKey('tm-extensions'),onPressed:_pickExtensions,icon:const Icon(Icons.tune,size:16),label:const Text('확장자')),
     if (narrow) _kindMenu()
     else for(final entry in _kinds.entries) FilterChip(label:Text(entry.key),selected:_selectedKinds.contains(entry.value),onSelected:(value)=>_toggleKind(entry.value, value)),
-    _searchModeSelector(collapsed: width < tmModeCollapseWidth),
+    ChoiceChip(key:const ValueKey('tm-unified-toggle'),label:const Text('통합 보기'),tooltip:'파일명·위계·본문을 한 목록으로',selected:_unifiedView,showCheckmark:true,onSelected:_setUnifiedView),
+    if (!_unifiedView) _searchModeSelector(collapsed: width < tmModeCollapseWidth),
     // 좁은 창에서는 검색창을 넓히되 오른쪽 아이콘 두 개(도움말/열 보기, 더보기)가 같은 줄에 남게 한다.
     SizedBox(width:narrow ? max(120.0, width - 120) : 180,child:_searchField()),
-    if (_contentMode && !_relatedMode)
+    if (_unifiedView)
+      const SizedBox.shrink()
+    else if (_contentMode && !_relatedMode)
       IconButton(
         icon: const Icon(Icons.help_outline),
         tooltip: '검색 연산자 도움말',

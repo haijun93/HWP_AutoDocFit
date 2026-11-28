@@ -123,6 +123,8 @@ pub struct State {
     pub result_count: usize,
     pub pending_parts: u8,
     pub arrived_parts: u8,
+    /// 이번 세대에서 실패한 구간 수(실패 응답에는 구간 종류가 없다).
+    pub failed_parts: u8,
     pub selected: Option<usize>,
     pub error: Option<String>,
     // SEMI3 & SEMI2 additions:
@@ -152,6 +154,13 @@ pub struct HistoryEntry {
 }
 
 impl State {
+    /// 아직 답하지 않은 검색 구간이 있는지. 있으면 0건을 '결과 없음'이라 말하지 않는다.
+    pub fn parts_pending(&self) -> bool {
+        self.phase == Phase::Searching
+            || (u32::from(self.pending_parts)
+                > self.arrived_parts.count_ones() + u32::from(self.failed_parts))
+    }
+
     pub fn history_entries(&self) -> Vec<HistoryEntry> {
         let mut entries = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -187,6 +196,7 @@ impl Default for State {
             result_count: 0,
             pending_parts: 0,
             arrived_parts: 0,
+            failed_parts: 0,
             selected: None,
             error: None,
             autocompletes: Vec::new(),
@@ -324,6 +334,7 @@ fn clear_results(state: &mut State) {
     state.result_count = 0;
     state.pending_parts = 0;
     state.arrived_parts = 0;
+    state.failed_parts = 0;
     state.selected = None;
     state.error = None;
 }
@@ -873,8 +884,13 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             if state.tab == Tab::All && matches!(state.phase, Phase::Searching | Phase::Results | Phase::Error) && generation == state.generation {
                 state.arrived_parts |= match kind { ResultKind::Names => 1, ResultKind::Hierarchy => 2, ResultKind::Body => 4 };
                 state.result_count = count;
-                state.phase = Phase::Results;
-                state.error = None;
+                // 앞 구간의 실패는 뒤 구간이 성공해도 지우지 않는다(QMSBUG1: 파일명 검색이
+                // 실패한 뒤 본문 0건이 도착해 '검색 결과가 없습니다'로 보였다). 새 검색만 지운다.
+                state.phase = if count == 0 && state.error.is_some() {
+                    Phase::Error
+                } else {
+                    Phase::Results
+                };
                 state.selected = (count > 0).then_some(0);
                 if final_part || state.arrived_parts.count_ones() >= state.pending_parts as u32 {
                     state.pending_parts = 0;
@@ -887,12 +903,24 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             message,
         } => {
             if generation == state.generation {
-                if state.phase == Phase::Searching {
-                    state.phase = Phase::Error;
-                    state.error = Some(message);
-                } else if state.tab == Tab::All && state.phase == Phase::Results && state.result_count == 0 {
-                    // Show the service/index failure immediately after an empty partial
-                    // result. A later successful leg can replace the error state.
+                if state.tab == Tab::All
+                    && matches!(state.phase, Phase::Searching | Phase::Results | Phase::Error)
+                {
+                    state.failed_parts = state.failed_parts.saturating_add(1);
+                    // Show the failure immediately when there is nothing else to show;
+                    // beside results it stays on the status line.
+                    if state.phase != Phase::Results || state.result_count == 0 {
+                        state.phase = Phase::Error;
+                    }
+                    match &mut state.error {
+                        Some(old) if !old.contains(&message) => {
+                            old.push_str(" · ");
+                            old.push_str(&message);
+                        }
+                        Some(_) => {}
+                        None => state.error = Some(message),
+                    }
+                } else if state.phase == Phase::Searching {
                     state.phase = Phase::Error;
                     state.error = Some(message);
                 }
@@ -1596,6 +1624,59 @@ mod tests {
         );
         assert_eq!(s.phase, Phase::Error);
         assert_eq!(s.error.as_deref(), Some("파일명 색인 준비 중 (empty)"));
+    }
+
+    fn part(state: &State, kind: ResultKind, count: usize) -> State {
+        let event = Event::SearchPartFinished {
+            generation: state.generation, kind, count, final_part: false,
+        };
+        step(state, event).0
+    }
+
+    fn failed(state: &State, message: &str) -> State {
+        let event = Event::SearchFailed { generation: state.generation, message: message.into() };
+        step(state, event).0
+    }
+
+    /// QMSBUG1 보고 재현: 작업 순서(파일명 → 위계 → 본문)대로 파일명이 먼저 실패하고
+    /// 본문 쪽이 0건으로 성공하면 "검색 결과가 없습니다"가 아니라 실패로 남아야 한다.
+    #[test]
+    fn filename_failure_survives_later_empty_content_parts() {
+        let (s, _) = step(&visible(), Event::Input("합의각서".into()));
+        let s = failed(&s, "파일명: 서비스 없음");
+        let s = part(&s, ResultKind::Hierarchy, 0);
+        let s = part(&s, ResultKind::Body, 0);
+        assert_eq!(s.phase, Phase::Error);
+        assert_eq!(s.error.as_deref(), Some("파일명: 서비스 없음"));
+        assert!(!s.parts_pending());
+    }
+
+    #[test]
+    fn partial_failure_stays_visible_beside_other_results() {
+        let (s, _) = step(&visible(), Event::Input("예산".into()));
+        let s = failed(&s, "파일명: 서비스 없음");
+        let s = part(&s, ResultKind::Hierarchy, 2);
+        assert_eq!(s.phase, Phase::Results);
+        assert_eq!(s.error.as_deref(), Some("파일명: 서비스 없음"));
+        // 결과가 이미 보이는 상태의 뒤 실패도 버리지 않고 덧붙인다(같은 문구는 한 번).
+        let s = failed(&s, "본문: 색인 없음");
+        let s = failed(&s, "본문: 색인 없음");
+        assert_eq!(s.phase, Phase::Results);
+        assert_eq!(s.error.as_deref(), Some("파일명: 서비스 없음 · 본문: 색인 없음"));
+    }
+
+    #[test]
+    fn parts_stay_pending_until_every_source_answered_or_failed() {
+        let (s, _) = step(&visible(), Event::Input("예산".into()));
+        assert!(s.parts_pending());
+        let s = part(&s, ResultKind::Names, 0);
+        assert!(s.parts_pending(), "파일명 0건만으로 '결과 없음'이라 할 수 없다");
+        let s = failed(&s, "위계: x");
+        assert!(s.parts_pending());
+        let s = part(&s, ResultKind::Body, 0);
+        assert!(!s.parts_pending());
+        let (next, _) = step(&s, Event::Input("예산안".into()));
+        assert!(next.parts_pending() && next.error.is_none());
     }
 
     #[test]

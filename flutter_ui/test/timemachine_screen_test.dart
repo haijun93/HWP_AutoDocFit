@@ -1401,6 +1401,46 @@ void main() {
     expect(find.text('보고서.pdf'), findsOneWidget);
   });
 
+  testWidgets('항목 번호가 없는 이름 검색 결과는 경로로 열고 폴더는 미리보기를 부르지 않는다', (tester) async {
+    final api = _FakeApi(
+      enabled: true,
+      fileSearchResults: [
+        {'name': '묶음', 'kind': 'folder', 'folder': 'C:\\Results', 'path': 'C:\\Results\\묶음', 'is_dir': true, 'size': null, 'mtime': 1234.0},
+        {'name': '문서.pdf', 'kind': 'pdf', 'folder': 'C:\\Results', 'path': 'C:\\Results\\문서.pdf', 'size': 4096, 'mtime': 1234.0},
+      ],
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '검색');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    final tableBtn = find.byTooltip('열 보기');
+    await tester.ensureVisible(tableBtn);
+    await tester.tap(tableBtn);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    for (final name in ['묶음', '문서.pdf']) {
+      final row = find.text(name);
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+    }
+    final opened = api.calls.where((c) => c.$1 == 'open').map((c) => c.$2).toList();
+    expect(opened, [
+      {'path': 'C:\\Results\\묶음'},
+      {'path': 'C:\\Results\\문서.pdf'},
+    ]);
+
+    final before = api.calls.where((c) => c.$1 == 'preview').length;
+    await tester.tap(find.text('묶음').first);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'preview').length, before);
+  });
+
   testWidgets('본문 검색 응답에 손상된 항목이 섞여 있어도 정상 항목을 파싱하여 표시한다', (tester) async {
     final api = _FakeApi(
       enabled: true,
