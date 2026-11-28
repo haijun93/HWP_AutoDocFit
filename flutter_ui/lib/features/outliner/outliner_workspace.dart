@@ -139,7 +139,10 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   // 명령 처리 중에 누른 Enter·Tab·Backspace·Delete 는 버리지 않고 끝난 뒤 차례로
   // 적용한다(OUTFLASH1·OUTKEYS2·OUTKEYS3).
   // [before] 는 앞 명령과 이 키 사이에 친 글이다.
-  final List<({String operation, TextEditingValue before, String? page})>
+  // [filtered] 는 블록 검색으로 가려진 블록이 있는 화면에서 누른 키다.
+  final List<
+    ({String operation, TextEditingValue before, String? page, bool filtered})
+  >
   _queued = [];
   static const _queueLimit = 64;
   bool _editing = false; // 처리 중인 명령이 블록 편집이라 이어 치는 글을 받는다
@@ -148,9 +151,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   Future<bool>? _leaving;
   // 칸마다 마지막으로 맞춘 문서 글. 문서 글이 그대로인데 칸이 다르면 저장하지 않은 입력이다.
   final Map<Object?, String> _shown = {};
-  // 블록 검색으로 거른 목록과, 거르기 전의 블록 번호 순서.
-  List<Map>? _filtered;
-  List<Object?> _unfiltered = const [];
+  // 블록 검색 결과. [_blocks] 는 늘 문서 전체이고(자리 = 문서 순번) 화면만 [ids] 로 거른다.
+  // 검색한 때의 문서([blocks])가 새로 읽히면 저절로 풀린다.
+  ({List<Map> blocks, Set<Object?> ids})? _filter;
   // 마지막 명령이 커서를 둔 블록과 그때의 칸(친 글을 뺀 상태).
   ({Object? id, TextEditingValue value})? _at;
   bool _cursorKnown = true; // false: 결과가 커서를 주지 않아 짐작한 자리
@@ -175,13 +178,29 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 페이지를 바꾸거나 저장이 거절되면 비운다.
   final OutlinerHistory _history = OutlinerHistory();
 
+  Set<Object?>? get _filterIds =>
+      identical(_filter?.blocks, _blocks) ? _filter!.ids : null;
+
+  /// 검색에 걸린 블록(검색 중이 아니면 전체).
+  Iterable<Map> get _shownBlocks {
+    final ids = _filterIds;
+    return ids == null ? _blocks : _blocks.where((b) => ids.contains(b['id']));
+  }
+
+  /// 검색 때문에 안 보이는 블록이 있는가.
+  bool get _hiding => _shownBlocks.length < _blocks.length;
+
+  /// 화면에 보이는 블록(검색·접힘 반영). 순번은 화면용이며 엔진에 보내지 않는다.
   List<Map> get _visibleBlocks {
+    final ids = _filterIds;
     final visible = <Map>[];
     var foldedAt = -1;
     for (final block in _blocks) {
       final indent = block['indent'] as int? ?? 0;
       if (foldedAt >= 0 && indent > foldedAt) continue;
       foldedAt = -1;
+      // 검색에 없는 접힌 블록은 걸린 하위를 가리지 않는다.
+      if (ids != null && !ids.contains(block['id'])) continue;
       visible.add(block);
       if (block['folded'] == true) foldedAt = indent;
     }
@@ -565,10 +584,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         .where((b) => b['id'] != except && _dirty(b))
         .firstOrNull;
     if (block == null) return null;
-    // 블록 검색으로 걸러진 목록이면 문서 안의 자리를 보낸다.
-    final index = identical(_filtered, _blocks)
-        ? _unfiltered.indexOf(block['id'])
-        : _blocks.indexOf(block);
+    final index = _blocks.indexOf(block);
     final sent = {
       for (final MapEntry(:key, :value) in _editors.entries) key: value.text,
     };
@@ -682,13 +698,18 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         _abortQueued('커서 위치를 알 수 없어 ');
         return;
       }
-      final live = typedSince(base.value, controller.value);
-      _queued.removeAt(0);
       var value = insertTyped(cursor.value, next.before);
-      // 글자 지우기인지 블록 합치기인지는 지금의 커서 위치로 정한다.
       final erased = erase
           ? eraseInField(value, forward: next.operation == 'delete')
           : null;
+      // 가려진 블록이 있는 화면에서 누른 키로는 블록을 합치지 않는다.
+      if (erase && erased == null && next.filtered) {
+        _abortQueued('블록 검색 중에 누른 키라 블록을 합치지 않았습니다. ');
+        return;
+      }
+      final live = typedSince(base.value, controller.value);
+      _queued.removeAt(0);
+      // 글자 지우기인지 블록 합치기인지는 지금의 커서 위치로 정한다.
       if (erased != null) {
         value = erased;
         _at = (id: cursor.id, value: value);
@@ -733,6 +754,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           ? TextEditingValue.empty
           : typedSince(base.value, now),
       page: _page,
+      filtered: _hiding,
     ));
     _base = (id: id, value: now);
   }
@@ -836,6 +858,25 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       if (test(b)) i,
   ];
 
+  /// 블록 검색으로 가려진 블록 때문에 결과를 알 수 없는 명령이면 그 이유(OUTFILTER1).
+  String? _filterRefusal(String operation) {
+    if (!_hiding) return null;
+    const clear = '검색 칸을 비워 모든 블록을 본 뒤 다시 하세요.';
+    switch (operation) {
+      case 'backspace' || 'delete':
+        return '블록 검색 중에는 블록을 합치지 않습니다(앞뒤 블록이 가려져 있을 수 있음). $clear';
+      case 'move_up' || 'move_down':
+        return '블록 검색 중에는 블록을 옮기지 않습니다(이웃 블록이 가려져 있을 수 있음). $clear';
+      case 'delete_selection' || 'cut':
+        // 지우는 명령은 선택한 블록의 하위까지 지운다.
+        final ids = _filterIds!;
+        if (_highlighted().any((id) => !ids.contains(id))) {
+          return '검색에서 가려진 하위 블록이 있어 삭제·잘라내기를 하지 않았습니다. $clear';
+        }
+    }
+    return null;
+  }
+
   /// 편집(또는 선택) 명령 하나를 엔진 규칙에 보내고 결과·커서·선택을 반영한다.
   Future<void> _key(
     String operation, {
@@ -845,6 +886,11 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     TextEditingValue? value,
   }) async {
     if (_page == null || _busy) return;
+    final refusal = _filterRefusal(operation);
+    if (refusal != null) {
+      setState(() => _message = refusal);
+      return;
+    }
     // 저장하지 못한 글이 다른 칸에 남아 있으면 명령이 덮으므로 저장부터 다시 한다.
     if (block != null &&
         _blocks.any((b) => b['id'] != block['id'] && _dirty(b))) {
@@ -1072,7 +1118,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     final indent = _blocks[at]['indent'] as int? ?? 0;
     for (var i = at - 1; i >= 0; i--) {
       if ((_blocks[i]['indent'] as int? ?? 0) < indent) {
-        _selectBlock(_blocks[i]['id']);
+        final id = _blocks[i]['id'];
+        if (_filterIds?.contains(id) ?? true) {
+          _selectBlock(id);
+        } else {
+          setState(() => _message = '상위 블록이 검색에서 가려져 있어 선택하지 않았습니다.');
+        }
         return;
       }
     }
@@ -1601,12 +1652,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       });
       final ids = (result['block_ids'] as List? ?? []).toSet();
       setState(() {
-        if (!identical(_filtered, _blocks)) {
-          _unfiltered = [for (final b in _blocks) b['id']];
-        }
-        _blocks = _filtered = _blocks
-            .where((b) => ids.contains(b['id']))
-            .toList();
+        // 앞서 고른 블록은 가려질 수 있으므로 선택을 푼다.
+        _selectedIds.clear();
+        _selectionAnchor = null;
+        _selectionCurrent = null;
+        _closePopup();
+        _filter = (blocks: _blocks, ids: ids);
       });
     });
   }
@@ -1764,9 +1815,14 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                             hintText: '페이지·블록 검색',
                             border: OutlineInputBorder(),
                           ),
-                          onChanged: (value) => setState(
-                            () => _pageQuery = value.trim().toLowerCase(),
-                          ),
+                          onChanged: (value) => setState(() {
+                            _pageQuery = value.trim().toLowerCase();
+                            // 칸을 비우면 블록 검색을 푼다.
+                            if (_pageQuery.isEmpty && _filterIds != null) {
+                              _filter = null;
+                              _message = '';
+                            }
+                          }),
                           onSubmitted: _searchBlocks,
                         ),
                       ),
@@ -2064,7 +2120,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                           onTap: () => _acceptPopup(candidate.$2),
                         ),
                       ),
-                    for (final block in _blocks)
+                    for (final block in _shownBlocks)
                       if ((block['page_links'] as List? ?? []).isNotEmpty)
                         Padding(
                           padding: EdgeInsets.only(
@@ -2087,6 +2143,11 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                     if (_blocks.isEmpty)
                       Text(
                         '블록이 없습니다. +를 눌러 첫 블록을 추가하세요.',
+                        style: TextStyle(color: c.muted),
+                      )
+                    else if (_shownBlocks.isEmpty)
+                      Text(
+                        '검색 결과가 없습니다. 검색 칸을 비우면 모든 블록이 보입니다.',
                         style: TextStyle(color: c.muted),
                       ),
                   ],
