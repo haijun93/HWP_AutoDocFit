@@ -488,6 +488,15 @@ impl Backend {
     }
 
     pub fn open(root: &Path) -> Result<Self> {
+        Self::open_mode(root, true)
+    }
+
+    /// 앱 안 통합 검색은 색인 복구·서비스 쓰기를 요청하지 않는다.
+    pub fn open_readonly(root: &Path) -> Result<Self> {
+        Self::open_mode(root, false)
+    }
+
+    fn open_mode(root: &Path, request_rebuild: bool) -> Result<Self> {
         // Index::open treats a missing manifest as empty; the UI needs an explicit
         // unavailable state and must never create the user's index directory.
         if !root.join("MANIFEST.kfm").is_file() {
@@ -496,11 +505,11 @@ impl Backend {
         let index = Index::open(root).map_err(|e| match e {
             kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. } => {
                 // 업데이트 직후 옛 형식 색인: 서비스에 질의 한 번을 보내 즉시 새로 만들게 한다(응답은 쓰지 않음).
-                let _ = pipe_call_with_timeout(
+                if request_rebuild { let _ = pipe_call_with_timeout(
                     PIPE_NAME,
                     &json!({"command":"query","id":1,"text":"색인","top":1}),
                     PIPE_LIGHT_TIMEOUT,
-                );
+                ); }
                 "색인을 새 형식으로 다시 만드는 중입니다. 잠시 뒤 다시 검색해 주세요.".to_string()
             }
             other => other.to_string(),

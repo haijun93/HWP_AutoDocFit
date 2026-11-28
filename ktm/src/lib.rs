@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod app_host;
 pub mod export;
 pub mod frame;
 pub mod highlight;
