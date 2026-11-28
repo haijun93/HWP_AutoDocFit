@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:docfit_ui/features/outliner/outliner_typeahead.dart';
 import 'package:docfit_ui/features/outliner/outliner_workspace.dart';
 
 // OUTKEYS2: 느린 엔진이 처리하는 동안 누른 Enter·친 글의 순서가 보존되는지.
@@ -89,6 +90,12 @@ class _Engine {
           texts.insert(i + 1, text.substring(p['end'] as int));
           at = i + 1;
           start = 0;
+        } else if (p['operation'] == 'backspace' && i > 0) {
+          at = i - 1;
+          start = texts[at].length;
+          texts[at] += texts.removeAt(i);
+        } else if (p['operation'] == 'delete' && i + 1 < texts.length) {
+          texts[i] += texts.removeAt(i + 1);
         }
         data = {
           'handled': true,
@@ -232,21 +239,23 @@ void main() {
     final engine = await _slowEnter(tester);
     expect(await _key(tester, LogicalKeyboardKey.keyA), isFalse);
     expect(await _key(tester, LogicalKeyboardKey.space), isFalse);
-    // 친 글이 없을 때의 Backspace·화살표는 이전처럼 받지 않는다.
+    // 칸에는 바로 손대지 않는다(Backspace 는 예약, 화살표는 받지 않는다).
     expect(await _key(tester, LogicalKeyboardKey.backspace), isTrue);
     expect(await _key(tester, LogicalKeyboardKey.arrowLeft), isTrue);
     expect(_texts(tester), ['abcd']);
     expect(_editable(tester, 1).controller.selection.baseOffset, 2);
     await _type(tester, 'zq');
-    // 친 글 안의 Backspace 는 지워지고, 그보다 앞의 글은 지워지지 않는다.
+    // 친 글 안의 Backspace 는 지워지고, 그보다 앞의 글은 바로 지워지지 않는다.
     for (var i = 0; i < 3; i++) {
       await _key(tester, LogicalKeyboardKey.backspace);
     }
     expect(_texts(tester), ['abcd']);
     await _type(tester, 'k');
     await _release(tester, engine);
-    expect(engine.operations, ['enter']);
-    expect(_texts(tester), ['ab', 'kcd']);
+    await _release(tester, engine);
+    // 예약한 첫 Backspace 는 새 블록 맨 앞이라 합치고, 둘째는 그 자리의 'b' 를 지운다.
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['akcd']);
   });
 
   testWidgets('Enter, text, Enter, text keeps every piece in its block', (
@@ -515,5 +524,265 @@ void main() {
     await _release(tester, engine);
     expect(engine.operations, ['commit', 'enter']);
     expect(_texts(tester), ['one!', 'two?', 'z']);
+  });
+
+  // ---------- OUTKEYS3: 처리 중의 Backspace·Delete ----------
+
+  testWidgets('Backspace right after Enter merges the blocks again', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    expect(await _key(tester, LogicalKeyboardKey.backspace), isTrue);
+    expect(engine.operations, ['enter']);
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['abcd']);
+    expect(_focused(tester), 1);
+    expect(_editable(tester, 1).controller.selection.baseOffset, 2);
+  });
+
+  testWidgets('consecutive Backspace undoes consecutive Enter in order', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    await _key(tester, LogicalKeyboardKey.enter);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    for (var i = 0; i < 4; i++) {
+      await _release(tester, engine);
+    }
+    expect(engine.operations, ['enter', 'enter', 'backspace', 'backspace']);
+    expect(_texts(tester), ['abcd']);
+  });
+
+  testWidgets('typed text is erased first, then the blocks are merged', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    await _type(tester, 'x');
+    await _key(tester, LogicalKeyboardKey.backspace); // 친 글
+    await _key(tester, LogicalKeyboardKey.backspace); // 블록 합치기
+    await _type(tester, 'z');
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['abzcd']);
+    expect(_editable(tester, 1).controller.selection.baseOffset, 3);
+  });
+
+  testWidgets('Backspace is judged by the cursor of the result, not the press', (
+    tester,
+  ) async {
+    // 누를 때는 블록 중간. Tab 결과의 커서도 중간이므로 글자를 지우고 합치지 않는다.
+    final engine = await _pump(tester, ['ab', 'cdef']);
+    await _focus(tester, 2, 2);
+    engine.slowKeys = true;
+    await _key(tester, LogicalKeyboardKey.tab);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await _key(tester, LogicalKeyboardKey.backspace); // 이때는 맨 앞 → 합치기
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.operations, ['indent', 'backspace']);
+    expect(engine.keys[1]['text'], 'ef');
+    expect(engine.keys[1]['start'], 0);
+    expect(_texts(tester), ['abef']);
+  });
+
+  testWidgets('Delete erases the next character or merges the next block', (
+    tester,
+  ) async {
+    final engine = await _pump(tester, ['ab', 'ef']);
+    await _focus(tester, 1, 2);
+    engine.slowKeys = true;
+    await _key(tester, LogicalKeyboardKey.enter); // 빈 블록이 생긴다
+    await _key(tester, LogicalKeyboardKey.delete); // 다음 블록 합치기
+    await _key(tester, LogicalKeyboardKey.delete); // 합친 뒤에는 글자 지우기
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.operations, ['enter', 'delete']);
+    expect(_texts(tester), ['ab', 'f']);
+    expect(_focused(tester), 2);
+  });
+
+  testWidgets('Delete after typing keeps the typed text before it', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    await _type(tester, 'x');
+    await _key(tester, LogicalKeyboardKey.delete);
+    await _release(tester, engine);
+    expect(engine.operations, ['enter']);
+    expect(_texts(tester), ['ab', 'xd']);
+    expect(_editable(tester, 2).controller.selection.baseOffset, 1);
+  });
+
+  testWidgets('Backspace keeps its place between Tab and Enter', (tester) async {
+    final engine = await _slowEnter(tester);
+    await _key(tester, LogicalKeyboardKey.tab);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await _key(tester, LogicalKeyboardKey.enter);
+    for (var i = 0; i < 4; i++) {
+      await _release(tester, engine);
+    }
+    expect(engine.operations, ['enter', 'indent', 'backspace', 'enter']);
+    expect(_texts(tester), ['ab', 'cd']);
+    expect(_focused(tester), 2);
+  });
+
+  testWidgets('Backspace during the save of Enter is applied after it', (
+    tester,
+  ) async {
+    final engine = await _pump(tester, ['abcd']);
+    await _focus(tester, 1, 2);
+    engine.slowSaves = true;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    await _key(tester, LogicalKeyboardKey.backspace);
+    engine.slowSaves = false;
+    await _release(tester, engine);
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['abcd']);
+  });
+
+  testWidgets('Backspace at the start of a clicked block waits for the save', (
+    tester,
+  ) async {
+    final engine = await _pump(tester, ['one', 'two']);
+    await _focus(tester, 1);
+    await _type(tester, '!');
+    engine.slowKeys = true;
+    await tester.tap(_field(2));
+    await tester.pump();
+    await tester.pump();
+    _editable(tester, 2).controller.selection = const TextSelection.collapsed(
+      offset: 0,
+    );
+    await _key(tester, LogicalKeyboardKey.backspace);
+    expect(engine.operations, ['commit']);
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.operations, ['commit', 'backspace']);
+    expect(_texts(tester), ['one!two']);
+  });
+
+  testWidgets('a held key does not merge several blocks', (tester) async {
+    final engine = await _slowEnter(tester, ['ab', 'cd', 'ef'], 2);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.backspace);
+    for (var i = 0; i < 5; i++) {
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.backspace);
+    }
+    await _release(tester, engine);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.backspace);
+    await _release(tester, engine);
+    // 처리가 끝난 뒤에도 누르고 있는 키는 맨 앞에서 합치지 않는다.
+    _editable(tester, _focused(tester)).controller.selection =
+        const TextSelection.collapsed(offset: 0);
+    await tester.sendKeyRepeatEvent(LogicalKeyboardKey.backspace);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.backspace);
+    await tester.pump();
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['ab', 'cd', 'ef']);
+  });
+
+  testWidgets('a held Delete does not merge several blocks', (tester) async {
+    final engine = await _pump(tester, ['ab', 'cd', 'ef']);
+    await _focus(tester, 1);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.delete);
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 3; i++) {
+      _editable(tester, 1).controller.selection = TextSelection.collapsed(
+        offset: _editable(tester, 1).controller.text.length,
+      );
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+    }
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.delete);
+    expect(engine.operations, ['delete']);
+    expect(_texts(tester), ['abcd', 'ef']);
+  });
+
+  testWidgets('a failed command drops the queued Backspace', (tester) async {
+    final engine = await _slowEnter(tester);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    engine.failKey = true;
+    await _release(tester, engine);
+    expect(engine.operations, ['enter']);
+    expect(_texts(tester), ['abcd']);
+    expect(find.textContaining('Backspace'), findsOneWidget);
+    expect(find.textContaining('적용하지 않았습니다'), findsOneWidget);
+  });
+
+  testWidgets('page clicks are ignored while a Backspace is queued', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await tester.tap(
+      find.widgetWithText(ListTile, '다른').last,
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await _release(tester, engine);
+    await _release(tester, engine);
+    expect(engine.loads, ['합성']);
+    expect(engine.operations, ['enter', 'backspace']);
+    expect(_texts(tester), ['abcd']);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+  testWidgets('without a cursor from the result Backspace is not applied', (
+    tester,
+  ) async {
+    final engine = await _pump(tester, ['abcd']);
+    await _focus(tester, 1, 2);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    engine.slowParse = true;
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    await _key(tester, LogicalKeyboardKey.backspace);
+    await _release(tester, engine);
+    expect(engine.operations, ['enter']);
+    expect(_texts(tester), ['abcd']);
+    expect(find.textContaining('커서 위치를 알 수 없어'), findsOneWidget);
+  });
+
+  testWidgets('a character erased after the command is saved on leaving', (
+    tester,
+  ) async {
+    final engine = await _slowEnter(tester);
+    await _key(tester, LogicalKeyboardKey.delete);
+    await _release(tester, engine);
+    expect(_texts(tester), ['ab', 'd']);
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    expect(engine.operations, ['enter', 'commit']);
+    await _release(tester, engine);
+    expect(engine.texts, ['ab', 'd']);
+    expect(_texts(tester), ['ab', 'd']);
+  });
+
+  test('Backspace and Delete inside a field', () {
+    TextEditingValue at(String text, int start, [int? end]) => TextEditingValue(
+      text: text,
+      selection: TextSelection(baseOffset: start, extentOffset: end ?? start),
+    );
+    String? erase(TextEditingValue v, {bool forward = false}) {
+      final r = eraseInField(v, forward: forward);
+      return r == null ? null : '${r.text}@${r.selection.baseOffset}';
+    }
+
+    expect(erase(at('ab', 0)), isNull);
+    expect(erase(at('ab', 2), forward: true), isNull);
+    expect(erase(at('', 0)), isNull);
+    expect(erase(at('가나', 2)), '가@1');
+    expect(erase(at('a👨‍👩‍👧b', 9)), 'ab@1');
+    expect(erase(at('a😀b', 1), forward: true), 'ab@1');
+    expect(erase(at('x[]y', 2)), 'xy@1');
+    expect(erase(at('abcd', 1, 3)), 'ad@1');
+    expect(erase(at('abcd', 0, 2), forward: true), 'cd@0');
   });
 }
