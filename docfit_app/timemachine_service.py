@@ -669,6 +669,43 @@ class TimemachineService:
                 return {**self.content_status(), **self._error("TM_INDEX_FAILED", f"색인 작업을 시작하지 못했습니다: {exc}")}
             return self.content_status()
 
+    def _clear_kfind_documents(self):
+        """검색 서비스(kfind)에 담긴 앱 문서('tm')를 모두 지운다. 서비스에 닿지 않으면 (0, 이유)를 돌려준다."""
+        removed = 0
+        try:
+            while True:
+                page = self.kfind.stale("tm", 0xffffffff, limit=1000)
+                keys = page.get("doc_keys", [])
+                if not keys:
+                    return removed, None
+                self.kfind.remove(keys)
+                removed += len(keys)
+        except Exception as exc:  # 서비스가 꺼져 있어도 앱 색인 초기화는 진행한다.
+            logging.getLogger(__name__).warning("검색 서비스 색인 지우기 실패: %s", exc)
+            return removed, f"{type(exc).__name__}"
+
+    def reset_content_index(self):
+        """색인 초기화: 진행 중이면 먼저 멈추고, 저장된 본문 색인·검색 서비스 색인을 비운 뒤 처음부터 다시 만든다.
+
+        원본 문서는 건드리지 않는다(지우는 것은 색인 데이터뿐).
+        """
+        if self._closing:
+            return self._error("TM_INDEX_FAILED", "색인 작업을 시작하지 못했습니다.")
+        if not self._settings.get("roots"):
+            return self._error("INVALID_INPUT", "조사할 폴더를 먼저 등록해 주세요.")
+        self.cancel_content_index(wait=True, timeout=10.0)
+        with self._content_lock:
+            if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
+                return self._error("TM_INDEX_BUSY", "진행 중인 색인을 멈추지 못했습니다. 잠시 뒤 다시 시도해 주세요.")
+        self.content_index.clear()
+        removed, kfind_error = self._clear_kfind_documents()
+        with self._content_lock:
+            self._kfind_synced = False
+            self._kfind_recovery_requested = False
+        status = self._start_content_index()
+        return {**status, "reset": True, "kfind_removed": removed,
+                **({"kfind_note": "검색 서비스에 닿지 않아 앱 색인만 초기화했습니다."} if kfind_error else {})}
+
     def cancel_content_index(self, *, wait=False, timeout=2.0):
         with self._content_lock:
             cancel_event = self._content_cancel
@@ -1151,6 +1188,8 @@ class TimemachineService:
             return self._start_content_index()
         if action in ("content_index_status", "content_index_progress"):
             return self.content_status()
+        if action == "content_index_reset":
+            return self.reset_content_index()
         if action == "content_index_cancel":
             return self.cancel_content_index(wait=bool(payload.get("wait", False)), timeout=float(payload.get("timeout", 2.0)))
         if action == "content_search":

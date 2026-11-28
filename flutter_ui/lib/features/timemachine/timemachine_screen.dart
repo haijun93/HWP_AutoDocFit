@@ -610,6 +610,36 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     _applyContentStatus(await _api.command('content_index_start'));
     await _readContentStatus();
   }
+  /// 색인 초기화: 저장된 본문 색인·검색 서비스 색인을 지우고 처음부터 다시 만든다(원본 파일은 그대로).
+  Future<void> _resetContentIndex() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('tm-reset-index-dialog'),
+        title: const Text('색인을 초기화할까요?'),
+        content: const Text('저장된 색인을 지우고 처음부터 다시 만듭니다. 원본 파일은 건드리지 않아요. '
+            '문서가 많으면 시간이 걸리고, 그동안 검색 결과가 일부만 나올 수 있어요.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('취소')),
+          FilledButton(
+            key: const ValueKey('tm-reset-index-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('초기화하고 다시 만들기'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final result = await _api.command('content_index_reset');
+    if (!mounted) return;
+    if (result['ok'] == false) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${result['message'] ?? '색인을 초기화하지 못했어요.'}')));
+    } else if (result['kfind_note'] != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${result['kfind_note']}')));
+    }
+    _applyContentStatus(result);
+    await _readContentStatus();
+  }
   void _pollContentIndex() {
     _contentPoll?.cancel();
     _contentPoll = Timer(const Duration(seconds: 1), _readContentStatus);
@@ -1587,6 +1617,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
             onPressed: _startContentIndex,
             icon: const Icon(Icons.play_arrow, size: 16),
             label: const Text('\uBCF8\uBB38 \uC0C9\uC778'),
+          ),
+        if (!_contentIndexRunning)
+          TextButton.icon(
+            key: const ValueKey('tm-reset-index'),
+            onPressed: _resetContentIndex,
+            icon: const Icon(Icons.restart_alt, size: 16),
+            label: const Text('색인 초기화'),
           ),
         Row(
           mainAxisSize: MainAxisSize.min,

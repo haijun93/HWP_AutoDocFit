@@ -2662,7 +2662,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         "클라우드/네트워크 본문 스킵",
                         "시스템 폴더 허용",
                     ],
-                    _ => &["설정과 인덱스 상태", "오류 로그 폴더 열기"],
+                    _ => &["설정과 인덱스 상태", "오류 로그 폴더 열기", "파일명 색인 지금 다시 만들기(시작·초기화)"],
                 };
                 let vals: Vec<String> = match active {
                     0 => vec![
@@ -2751,6 +2751,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             s.recent_queries.len()
                         ),
                         "클릭하여 로그 폴더 열기".into(),
+                        "클릭하면 서비스가 드라이브 전체 이름을 새로 훑어요".into(),
                     ],
                 };
                 let line = scale(h, 38);
@@ -3144,6 +3145,15 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     InvalidateRect(h, null(), 0);
                                     return 0;
                                 }
+                            }
+                            if current_tab == 3 && idx == 2 {
+                                // 파일명 색인 수동 시작·초기화: 서비스에 names_build 요청(바로 돌아오는 가벼운 호출).
+                                let message = match ktm::backend::pipe_names_build(ktm::backend::PIPE_NAME) {
+                                    Ok(done) | Err(done) => done,
+                                };
+                                edit(|u| u.status_text = message);
+                                InvalidateRect(h, null(), 0);
+                                return 0;
                             }
                             if current_tab == 3 && idx == 1 {
                                 let log_dir = std::env::var_os("LOCALAPPDATA")
