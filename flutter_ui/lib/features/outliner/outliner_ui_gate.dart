@@ -101,13 +101,12 @@ class _OutlinerUiGateState extends State<OutlinerUiGate> {
     final mode = _mode;
     if (mode == null) return const SizedBox.expand();
     if (mode == 'native') return _nativeNotice(context);
-    final openButton = keepEditorFocus(
-      IconButton(
-        key: const ValueKey('outliner-open-native'),
-        tooltip: '새 창(Win32)으로 열기',
-        onPressed: _busy ? null : _switchToNative,
-        icon: const Icon(Icons.open_in_new),
-      ),
+    // 화면이 바뀌므로 칸을 벗어나는 것으로 쳐서 확정 전 글이 저장되게 한다.
+    final openButton = IconButton(
+      key: const ValueKey('outliner-open-native'),
+      tooltip: '새 창(Win32)으로 열기',
+      onPressed: _busy ? null : _switchToNative,
+      icon: const Icon(Icons.open_in_new),
     );
     final builder = widget.workspaceBuilder;
     if (builder == null) {

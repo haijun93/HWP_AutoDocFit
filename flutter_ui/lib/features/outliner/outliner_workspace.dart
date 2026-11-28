@@ -142,6 +142,14 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   _queued = [];
   static const _queueLimit = 64;
   bool _editing = false; // 처리 중인 명령이 블록 편집이라 이어 치는 글을 받는다
+  // 칸을 벗어나며 남긴 글을 저장하는 중. 누른 이동·단추는 이 저장을 기다렸다가 한다.
+  bool _leaveSave = false;
+  Future<bool>? _leaving;
+  // 칸마다 마지막으로 맞춘 문서 글. 문서 글이 그대로인데 칸이 다르면 저장하지 않은 입력이다.
+  final Map<Object?, String> _shown = {};
+  // 블록 검색으로 거른 목록과, 거르기 전의 블록 번호 순서.
+  List<Map>? _filtered;
+  List<Object?> _unfiltered = const [];
   // 마지막 명령이 커서를 둔 블록과 그때의 칸(친 글을 뺀 상태).
   ({Object? id, TextEditingValue value})? _at;
   // 입력 중인 칸 = 이 값 + 마지막 예약 키 뒤에 친 글.
@@ -328,6 +336,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     _blocks = (doc['document']?['blocks'] as List? ?? [])
         .whereType<Map>()
         .toList();
+    _shown.clear();
+    _syncEditorsToBlocks(); // 블록 번호는 페이지마다 다시 쓰인다.
   }
 
   Future<void> _open(String page) async => _run(() async {
@@ -387,7 +397,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             content: Text('페이지 이름을 "$name"(으)로 변경했습니다. (링크 $count개 갱신)'),
             action: SnackBarAction(
               label: '실행 취소',
-              onPressed: () => _undoRename(),
+              onPressed: () => _after(_undoRename),
             ),
           ),
         );
@@ -476,7 +486,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             content: Text('"$deletedPage" 페이지를 삭제했습니다.'),
             action: SnackBarAction(
               label: '실행 취소(복원)',
-              onPressed: () => _restorePage(),
+              onPressed: () => _after(_restorePage),
             ),
           ),
         );
@@ -494,7 +504,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   /// [editing] 이면 처리 중에 친 글·Enter·Tab 을 받는다. [typed] 는 명령에 보낸 칸의 상태로,
   /// 결과가 칸의 글을 바꾸는 명령만 준다.
-  Future<void> _run(
+  Future<bool> _run(
     Future<void> Function() action, {
     bool editing = false,
     ({Object? id, TextEditingValue value})? typed,
@@ -522,9 +532,103 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         } else {
           _at = _base = null;
         }
+        // 처리 중에 칸을 벗어났다면 남은 글을 이어서 저장한다(실패 직후에는 되풀이하지 않는다).
+        if (!failed && !_blockHasFocus && _pendingFocus == null) {
+          _saveLeft();
+        }
       }
     }
+    return !failed;
   }
+
+  bool get _blockHasFocus => _focusNodes.values.any((n) => n.hasFocus);
+
+  /// 이동·단추를 막아야 하는 처리 중.
+  bool get _locked => _busy && !_leaveSave;
+
+  /// 아직 저장하지 않은 입력이 있는 칸인가.
+  bool _dirty(Map block) {
+    final controller = _editors[block['id']];
+    final text = '${block['text'] ?? ''}';
+    return controller != null &&
+        controller.text != text &&
+        _shown[block['id']] == text;
+  }
+
+  /// [except] 밖의 칸에 남은 글을 저장한다. 저장할 것이 없거나 지금 못 하면 null.
+  Future<bool>? _saveLeft({Object? except}) {
+    if (_page == null || _busy || _selectedIds.isNotEmpty) return null;
+    final block = _blocks
+        .where((b) => b['id'] != except && _dirty(b))
+        .firstOrNull;
+    if (block == null) return null;
+    // 블록 검색으로 걸러진 목록이면 문서 안의 자리를 보낸다.
+    final index = identical(_filtered, _blocks)
+        ? _unfiltered.indexOf(block['id'])
+        : _blocks.indexOf(block);
+    final sent = {
+      for (final MapEntry(:key, :value) in _editors.entries) key: value.text,
+    };
+    final folded = _indicesWhere((b) => b['folded'] == true);
+    _leaveSave = true;
+    return _leaving = _run(() async {
+      try {
+        final before = _markdown;
+        final result = await _call({
+          'action': 'key',
+          'operation': 'commit',
+          'page': _page,
+          'markdown': _markdown,
+          'block': index,
+          'start': 0,
+          'end': 0,
+          'text': sent[block['id']],
+          'selection': const <int>[],
+          'folded': folded,
+        });
+        _markdown = result['markdown'] as String? ?? _markdown;
+        _blocks = (result['document']?['blocks'] as List? ?? [])
+            .whereType<Map>()
+            .toList();
+        // 보낸 뒤에 더 친 칸은 덮지 않는다.
+        for (final b in _blocks) {
+          final id = b['id'];
+          final controller = _editors[id];
+          if (controller == null) continue;
+          _shown[id] = '${b['text'] ?? ''}';
+          if (controller.text == sent[id]) _syncEditor(b);
+        }
+        if (_markdown != before) await _saveRecording(before);
+      } finally {
+        _leaveSave = false;
+      }
+    }, editing: true);
+  }
+
+  /// 남은 글을 모두 저장한다. false 면 하려던 이동을 하지 않는다(글은 칸에 남는다).
+  Future<bool> _settle() async {
+    if (_busy) {
+      if (!_leaveSave || !await _leaving!) return false;
+    }
+    while (mounted && !_busy) {
+      final save = _saveLeft();
+      if (save == null) return true;
+      if (!await save) return false;
+    }
+    return false;
+  }
+
+  /// 남은 글을 저장한 뒤 [action] 을 한다.
+  Future<void> _after(void Function() action) async {
+    if (await _settle() && mounted) action();
+  }
+
+  /// 블록 줄의 단추: 저장하면 문서가 새로 읽히므로 같은 번호의 블록을 다시 찾는다.
+  Future<void> _onRow(Object? id, void Function(Map block) action) =>
+      _after(() {
+        final block = _blocks.where((b) => b['id'] == id).firstOrNull;
+        if (block != null) action(block);
+      });
 
   /// 예약한 키를 적용하지 않는다. 친 글은 이미 칸에 있으므로 칸을 지키기만 한다.
   void _abortQueued() {
@@ -646,6 +750,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       selection = base.value.selection;
     }
     _syncEditorsToBlocks(except: id);
+    _shown[id] = text;
     final clean = TextEditingValue(text: text, selection: selection);
     final rest = _queued.fold(clean, (v, q) => insertTyped(v, q.before));
     _at = (id: id, value: clean);
@@ -709,6 +814,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     TextEditingValue? value,
   }) async {
     if (_page == null || _busy) return;
+    // 저장하지 못한 글이 다른 칸에 남아 있으면 명령이 덮으므로 저장부터 다시 한다.
+    if (block != null &&
+        _blocks.any((b) => b['id'] != block['id'] && _dirty(b))) {
+      _saveLeft(except: block['id']);
+      return;
+    }
     final controller = block == null ? null : _editors[block['id']];
     final index = block == null ? null : _blocks.indexOf(block);
     final selected = selection
@@ -882,39 +993,13 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     }
   }
 
-  /// 다른 블록 칸으로 옮겨 갈 때, 벗어난 칸의 확정하지 않은 글을 저장한다.
-  void _commitOthers(Object? focused) {
-    if (_page == null || _busy) return;
-    for (final (i, block) in _blocks.indexed) {
-      final controller = _editors[block['id']];
-      if (block['id'] == focused ||
-          controller == null ||
-          controller.text == '${block['text'] ?? ''}') {
-        continue;
-      }
-      final text = controller.text;
-      final folded = _indicesWhere((b) => b['folded'] == true);
-      _run(() async {
-        final before = _markdown;
-        final result = await _call({
-          'action': 'key',
-          'operation': 'commit',
-          'page': _page,
-          'markdown': _markdown,
-          'block': i,
-          'start': 0,
-          'end': 0,
-          'text': text,
-          'selection': const <int>[],
-          'folded': folded,
-        });
-        _markdown = result['markdown'] as String? ?? _markdown;
-        _blocks = (result['document']?['blocks'] as List? ?? [])
-            .whereType<Map>()
-            .toList();
-        if (_markdown != before) await _saveRecording(before);
-      }, editing: true);
-      return;
+  /// 칸의 포커스 변화: 다른 블록으로 가면 벗어난 칸을, 블록 밖으로 나가면 남은 글을 저장한다.
+  void _focusChanged(Object? id, FocusNode node) {
+    if (!mounted) return;
+    if (node.hasFocus) {
+      _saveLeft(except: id);
+    } else if (!_blockHasFocus && _pendingFocus == null) {
+      _saveLeft();
     }
   }
 
@@ -1335,32 +1420,32 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }
 
   /// 입력 칸에 아직 확정(Enter·Tab 등)하지 않은 글이 있는 블록. 있으면 칸 자체의 글자 되돌리기가 먼저다.
-  Map? _pendingBlock() {
-    for (final block in _blocks) {
-      final controller = _editors[block['id']];
-      final focus = _focusNodes[block['id']];
-      // 포커스가 없는 칸은 다음 그리기에서 문서 글로 맞춰지므로 '미확정 입력'이 아니다.
-      if (controller != null &&
-          focus != null &&
-          focus.hasFocus &&
-          controller.text != '${block['text'] ?? ''}') {
-        return block;
-      }
-    }
-    return null;
-  }
+  Map? _pendingBlock() => _blocks
+      .where(
+        (b) =>
+            _dirty(b) ||
+            ((_focusNodes[b['id']]?.hasFocus ?? false) &&
+                _editors[b['id']]?.text != '${b['text'] ?? ''}'),
+      )
+      .firstOrNull;
 
   void _syncEditorsToBlocks({Object? except}) {
     for (final block in _blocks) {
       if (except != null && block['id'] == except) continue;
-      final controller = _editors[block['id']];
-      final text = '${block['text'] ?? ''}';
-      if (controller != null && controller.text != text) {
-        controller.value = TextEditingValue(
-          text: text,
-          selection: TextSelection.collapsed(offset: text.length),
-        );
-      }
+      _syncEditor(block);
+    }
+  }
+
+  void _syncEditor(Map block) {
+    final controller = _editors[block['id']];
+    if (controller == null) return;
+    final text = '${block['text'] ?? ''}';
+    _shown[block['id']] = text;
+    if (controller.text != text) {
+      controller.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
     }
   }
 
@@ -1458,7 +1543,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }
 
   Future<void> _searchBlocks(String query) async {
-    if (query.trim().runes.length < 2 || _page == null || _busy) return;
+    if (query.trim().runes.length < 2 || !await _settle()) return;
+    if (!mounted || _page == null) return;
     await _run(() async {
       final result = await _call({
         'action': 'search',
@@ -1467,9 +1553,14 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         'query': query,
       });
       final ids = (result['block_ids'] as List? ?? []).toSet();
-      setState(
-        () => _blocks = _blocks.where((b) => ids.contains(b['id'])).toList(),
-      );
+      setState(() {
+        if (!identical(_filtered, _blocks)) {
+          _unfiltered = [for (final b in _blocks) b['id']];
+        }
+        _blocks = _filtered = _blocks
+            .where((b) => ids.contains(b['id']))
+            .toList();
+      });
     });
   }
 
@@ -1515,9 +1606,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             '접기/펼치기 Ctrl+↑/↓·Ctrl+; · TODO Ctrl+Enter · 한 블록에 붙여넣기 Ctrl+Shift+V',
         child: Icon(Icons.keyboard_outlined, size: 18),
       ),
-      // 단추가 포커스를 가져가면 입력 중이던 칸이 확정 전 글을 잃으므로 포커스를 받지 않게 한다.
-      ExcludeFocus(
-        child: IconButton(
+      // 확정 전 글만 되돌려야 하므로 누를 때 칸을 벗어나 저장되지 않게 한다.
+      keepEditorFocus(
+        IconButton(
           key: const ValueKey('outliner-undo'),
           tooltip: '실행 취소 (Ctrl+Z)',
           onPressed:
@@ -1529,8 +1620,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           icon: const Icon(Icons.undo),
         ),
       ),
-      ExcludeFocus(
-        child: IconButton(
+      keepEditorFocus(
+        IconButton(
           key: const ValueKey('outliner-redo'),
           tooltip: '다시 실행 (Ctrl+Y)',
           onPressed:
@@ -1545,19 +1636,25 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       ),
       IconButton(
         tooltip: '이름 바꾸기',
-        onPressed: _page == null || _busy ? null : _renamePage,
+        onPressed: _page == null || _locked
+            ? null
+            : () => _after(_renamePage),
         icon: const Icon(Icons.drive_file_rename_outline),
       ),
       IconButton(
         tooltip: '페이지 삭제',
-        onPressed: _page == null || _busy ? null : _deletePage,
+        onPressed: _page == null || _locked
+            ? null
+            : () => _after(_deletePage),
         icon: const Icon(Icons.delete_outline),
       ),
       IconButton(
         tooltip: '새 블록',
-        onPressed: _blocks.isEmpty || _busy
+        onPressed: _blocks.isEmpty || _locked
             ? null
-            : () => _edit(_blocks.last, 'insert', ''),
+            : () => _after(() {
+                if (_blocks.isNotEmpty) _edit(_blocks.last, 'insert', '');
+              }),
         icon: const Icon(Icons.add),
       ),
       ...widget.headerActions,
@@ -1633,7 +1730,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                 ListTile(
                   leading: const Icon(Icons.today_outlined),
                   title: const Text('오늘의 일지'),
-                  onTap: _busy ? null : _openToday,
+                  onTap: _locked ? null : () => _after(_openToday),
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1649,7 +1746,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                       ),
                       IconButton(
                         tooltip: '새 페이지',
-                        onPressed: _busy ? null : _newPage,
+                        onPressed: _locked ? null : () => _after(_newPage),
                         icon: const Icon(Icons.add),
                       ),
                     ],
@@ -1661,7 +1758,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                     leading: const Icon(Icons.history, size: 18),
                     title: Text(name),
                     selected: name == _page,
-                    onTap: _busy ? null : () => _open(name),
+                    onTap: _locked ? null : () => _after(() => _open(name)),
                   ),
                 const Divider(height: 1),
                 Expanded(
@@ -1675,7 +1772,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                           selected: p['name'] == _page,
                           leading: const Icon(Icons.description_outlined),
                           title: Text('${p['name']}'),
-                          onTap: _busy ? null : () => _open('${p['name']}'),
+                          onTap: _locked
+                              ? null
+                              : () => _after(() => _open('${p['name']}')),
                         ),
                     ],
                   ),
@@ -1772,11 +1871,11 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                             IconButton(
                               tooltip: '접기/펼치기',
                               visualDensity: VisualDensity.compact,
-                              onPressed: _busy
+                              onPressed: _locked
                                   ? null
-                                  : () => _key(
-                                      'toggle_collapse',
-                                      block: block,
+                                  : () => _onRow(
+                                      block['id'],
+                                      (b) => _key('toggle_collapse', block: b),
                                     ),
                               icon: Icon(
                                 block['folded'] == true
@@ -1788,26 +1887,28 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               child: Builder(
                                 builder: (context) {
                                   final id = block['id'];
-                                  final controller = _editors.putIfAbsent(
-                                    id,
-                                    () => TextEditingController(
-                                      text: '${block['text'] ?? ''}',
-                                    ),
-                                  );
+                                  final text = '${block['text'] ?? ''}';
+                                  final controller = _editors.putIfAbsent(id, () {
+                                    _shown[id] = text;
+                                    return TextEditingController(text: text);
+                                  });
                                   final focus = _focusNodes.putIfAbsent(id, () {
                                     final node = FocusNode();
-                                    node.addListener(() {
-                                      if (node.hasFocus) _commitOthers(id);
-                                    });
+                                    node.addListener(
+                                      () => _focusChanged(id, node),
+                                    );
                                     return node;
                                   });
-                                  // 처리 중에 친 글·곧 커서가 올 칸은 덮지 않는다.
-                                  if (!focus.hasFocus &&
+                                  // 문서 글이 바뀐 칸만 맞춘다. 저장하지 않은 입력,
+                                  // 처리 중에 친 글, 곧 커서가 올 칸은 덮지 않는다.
+                                  if (controller.text == text) {
+                                    _shown[id] = text;
+                                  } else if (!focus.hasFocus &&
                                       id != _pendingFocus &&
                                       !(_busy && id == _base?.id) &&
-                                      controller.text !=
-                                          '${block['text'] ?? ''}') {
-                                    controller.text = '${block['text'] ?? ''}';
+                                      _shown[id] != text) {
+                                    _shown[id] = text;
+                                    controller.text = text;
                                   }
                                   return Focus(
                                     onKeyEvent: (node, event) => _handleKey(
@@ -1853,13 +1954,16 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               tooltip: block['status'] == 'DONE'
                                   ? '완료 해제'
                                   : '완료 표시',
-                              onPressed: _busy
+                              onPressed: _locked
                                   ? null
-                                  : () => _setTextAndEdit(
-                                      block,
-                                      'toggle_status',
-                                      _editors[block['id']]?.text ??
-                                          '${block['text'] ?? ''}',
+                                  : () => _onRow(
+                                      block['id'],
+                                      (b) => _setTextAndEdit(
+                                        b,
+                                        'toggle_status',
+                                        _editors[b['id']]?.text ??
+                                            '${b['text'] ?? ''}',
+                                      ),
                                     ),
                               icon: Icon(
                                 block['status'] == 'DONE'
@@ -1875,16 +1979,22 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                 _minRowForIndentButtons) ...[
                             IconButton(
                               tooltip: '들여쓰기',
-                              onPressed: _busy
+                              onPressed: _locked
                                   ? null
-                                  : () => _key('indent', block: block),
+                                  : () => _onRow(
+                                      block['id'],
+                                      (b) => _key('indent', block: b),
+                                    ),
                               icon: const Icon(Icons.keyboard_tab, size: 18),
                             ),
                             IconButton(
                               tooltip: '내어쓰기',
-                              onPressed: _busy
+                              onPressed: _locked
                                   ? null
-                                  : () => _key('outdent', block: block),
+                                  : () => _onRow(
+                                      block['id'],
+                                      (b) => _key('outdent', block: b),
+                                    ),
                               icon: const Icon(
                                 Icons.format_indent_decrease,
                                 size: 18,
@@ -1896,14 +2006,16 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                         ),
                       ),
                     for (final (i, candidate) in candidates.indexed)
-                      ListTile(
-                        dense: true,
-                        selected: i == _popupIndex,
-                        leading: Icon(
-                          _popupOpen == '[[' ? Icons.link : Icons.tag,
+                      keepEditorFocus(
+                        ListTile(
+                          dense: true,
+                          selected: i == _popupIndex,
+                          leading: Icon(
+                            _popupOpen == '[[' ? Icons.link : Icons.tag,
+                          ),
+                          title: Text(candidate.$1),
+                          onTap: () => _acceptPopup(candidate.$2),
                         ),
-                        title: Text(candidate.$1),
-                        onTap: () => _acceptPopup(candidate.$2),
                       ),
                     for (final block in _blocks)
                       if ((block['page_links'] as List? ?? []).isNotEmpty)
@@ -1918,9 +2030,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               for (final link in block['page_links'] as List)
                                 ActionChip(
                                   label: Text('[[$link]]'),
-                                  onPressed: _busy
+                                  onPressed: _locked
                                       ? null
-                                      : () => _open('$link'),
+                                      : () => _after(() => _open('$link')),
                                 ),
                             ],
                           ),
@@ -1956,7 +2068,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                     page: _page,
                     markdown: _markdown,
                     selectedBlockId: _selectedIds.firstOrNull,
-                    onOpen: (name) => _open(name),
+                    onOpen: (name) => _after(() => _open(name)),
                     toggle: _panelToggle('right', '오른쪽', false, true),
                     backlinksCollapsed: _collapsed('backlinks'),
                     blockRefsCollapsed: _collapsed('blockRefs'),
