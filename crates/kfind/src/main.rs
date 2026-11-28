@@ -55,7 +55,7 @@ fn run() -> Result<()> {
                 })?;
                 println!("저장된 대체 방식: {mode:?}");
                 match mode {
-                    Fallback::User => user_mode(user_index()?, kfind::PIPE_NAME),
+                    Fallback::User => user_mode(user_index()?, kfind::PIPE_NAME, true),
                     Fallback::Task => install_task(),
                 }
             }
@@ -78,6 +78,7 @@ fn run() -> Result<()> {
                 .find(|w| w[0] == "--pipe-name")
                 .and_then(|w| w[1].to_str())
                 .unwrap_or(kfind::PIPE_NAME),
+            auto_names_allowed(&args),
         ),
         _ => {
             println!(
@@ -93,11 +94,19 @@ fn user_index() -> Result<PathBuf> {
         .ok_or("LOCALAPPDATA unavailable")?
         .join("HwpAutoDocFit/index"))
 }
-fn user_mode(root: PathBuf, name: &str) -> Result<()> {
+/// 색인 위치나 파이프를 따로 준 실행(시험·격리 실행)은 실제 사용자 폴더를 스스로 훑지 않는다.
+fn auto_names_allowed(args: &[std::ffi::OsString]) -> bool {
+    !args.iter().any(|a| a == "--index-root" || a == "--pipe-name")
+}
+fn user_mode(root: PathBuf, name: &str, auto_names: bool) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_sender, receiver) = tokio::sync::watch::channel(false);
     // 서비스 없이도 파일명 검색이 되도록 바탕 화면·문서·다운로드로 파일명 색인을 스스로 만든다.
-    let auto_roots = kfind::names::default_user_roots_from_env();
+    let auto_roots = if auto_names {
+        kfind::names::default_user_roots_from_env()
+    } else {
+        Vec::new()
+    };
     runtime.block_on(kfind::pipe::run_user(name, root, receiver, auto_roots))
 }
 fn install_task() -> Result<()> {
@@ -120,4 +129,16 @@ fn install_task() -> Result<()> {
         return Err("scheduled task installation failed".into());
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::auto_names_allowed;
+
+    #[test]
+    fn only_the_plain_user_run_indexes_the_users_folders() {
+        let args = |v: &[&str]| v.iter().map(std::ffi::OsString::from).collect::<Vec<_>>();
+        assert!(auto_names_allowed(&args(&["--user"])));
+        assert!(!auto_names_allowed(&args(&["--user", "--index-root", "x"])));
+        assert!(!auto_names_allowed(&args(&["--user", "--pipe-name", "x"])));
+    }
 }
